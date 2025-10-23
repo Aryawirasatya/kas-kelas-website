@@ -4,12 +4,14 @@ use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return view('welcome');
+    // redirect ke route bernama 'dashboard' (bukan 'dashboard.index')
+    return redirect()->route('dashboard');
 });
 
 Route::get('/dashboard', function () {
-    return view('dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+    // render view custom kamu: resources/views/dashboard/index.blade.php
+    return view('dashboard.index');
+})->middleware(['auth', 'verified'])->name('dashboard'); // <- namanya 'dashboard' saja
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
