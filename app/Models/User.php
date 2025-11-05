@@ -6,7 +6,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-// ⬇️ IMPORT TRAIT SPATIE
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
@@ -24,8 +23,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-
-        'role','username','nisn','gender','active',
+        'role','nisn','gender','active',
 
     ];
 
