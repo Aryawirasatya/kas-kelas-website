@@ -118,33 +118,52 @@
                     <i class="mdi mdi-arrow-top-right-bold-box-outline menu-icon"></i>
                     <span class="menu-title">Pengeluaran Kas</span>
                     <i class="menu-arrow"></i>
-                </a>
-                <div class="collapse {{ $spendOpen ? 'show' : '' }}" id="spend">
-                    <ul class="nav flex-column sub-menu">
-                        <li class="nav-item">
-                            {{-- TODO: ganti "#" ke route('expense.request.index') --}}
-                            <a class="nav-link {{ request()->routeIs('expense.request.index') ? 'active' : '' }}" href="#">
-                                Ajukan Pengeluaran
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            {{-- TODO: ganti "#" ke route('expense.request.history') --}}
-                            <a class="nav-link {{ request()->routeIs('expense.request.history') ? 'active' : '' }}" href="#">
-                                Status Pengajuan
-                            </a>
-                        </li>
-                    </ul>
-                </div>
-            </li>
+        </a>
+
+        <div class="collapse {{ $spendOpen ? 'show' : '' }}" id="spend">
+            <ul class="nav flex-column sub-menu">
+
+                {{-- Halaman ajukan pengeluaran --}}
+                <li class="nav-item">
+                    <a class="nav-link {{ request()->routeIs('expense_requests.create') ? 'active' : '' }}"
+                    href="{{ route('expense_requests.create') }}">
+                        Ajukan Pengeluaran
+                    </a>
+                </li>
+
+                {{-- Halaman daftar/status pengajuan --}}
+                <li class="nav-item">
+                    <a class="nav-link {{ request()->routeIs('expense_requests.index') ? 'active' : '' }}"
+                    href="{{ route('expense_requests.index') }}">
+                        Status Pengajuan
+                    </a>
+                </li>
+
+                {{-- Bagian realisasi sementara dihapus agar tidak error --}}
+                {{-- 
+                <li class="nav-item">
+                    <a class="nav-link {{ request()->routeIs('cash_expenses.index') ? 'active' : '' }}"
+                    href="{{ route('cash_expenses.index') }}">
+                        Realisasi Pengeluaran
+                    </a>
+                </li>
+                --}}
+
+            </ul>
+        </div>
+    </li>
+
+
 
             {{-- Kategori Pengeluaran --}}
             <li class="nav-item">
-                {{-- TODO: ganti "#" ke route('categories.index') --}}
-                <a class="nav-link {{ request()->routeIs('categories.*') ? 'active' : '' }}" href="#">
+                <a class="nav-link {{ request()->routeIs('categories.*') ? 'active' : '' }}" href="{{ route('categories.index') }}">
                     <i class="mdi mdi-shape-outline menu-icon"></i>
                     <span class="menu-title">Kategori Pengeluaran</span>
                 </a>
             </li>
+
+
         @endif
 
         {{-- =========================
