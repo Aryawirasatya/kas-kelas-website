@@ -3,7 +3,11 @@
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\YearController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ExpenseRequestController;
+use App\Http\Controllers\CashExpenseController;
 use Illuminate\Support\Facades\Route;
+
 
 Route::get('/', fn() => redirect()->route('dashboard'));
 
@@ -43,6 +47,13 @@ Route::middleware(['auth','role:guru'])->group(function () {
   Route::post('/tahun-ajaran/{year}/periods/generate', [YearController::class,'generatePeriods'])->name('year.periods.generate');
   Route::post('/tahun-ajaran/{year}/activate',         [YearController::class,'activate'])->name('year.activate');
   Route::post('/tahun-ajaran/{year}/close',            [YearController::class,'close'])->name('year.close');
+});
+
+  // web CRUD (view + controller)
+  Route::middleware(['auth','role:bendahara'])->group(function () {
+    Route::resource('categories', CategoryController::class);
+    Route::resource('expense_requests', ExpenseRequestController::class);
+
 });
 
 
