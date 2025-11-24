@@ -1,12 +1,16 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\YearController;
 use App\Http\Controllers\PeriodController;
 use App\Http\Controllers\CashController;
 use App\Http\Controllers\UnpaidReasonController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ExpenseRequestController;
+use App\Http\Controllers\CashExpenseController;
 
 Route::get('/', fn () => redirect()->route('dashboard'));
 
@@ -51,14 +55,14 @@ Route::middleware(['auth', 'role:guru'])->group(function () {
     Route::post('/tahun-ajaran/{year}/activate',               [YearController::class, 'activate'])->name('year.activate');
     Route::post('/tahun-ajaran/{year}/close',                  [YearController::class, 'close'])->name('year.close');
 
-    // ⬇⬇⬇ BARU: halaman ringkasan 1 tahun ajaran (active / archived) ⬇⬇⬇
+    // Halaman ringkasan 1 tahun ajaran (active / archived)
     Route::get('/tahun-ajaran/{year}/ringkasan',               [YearController::class, 'summary'])->name('year.summary');
 });
 
 /**
  * Periode (index untuk semua user login; buat/open/close untuk guru & bendahara)
  * Catatan: method controller yang tersedia adalah createToday(), open(), close().
- *          Route "generate" kita arahkan ke createToday() agar sesuai implementasi.
+ *         Route "generate" kita arahkan ke createToday() agar sesuai implementasi.
  */
 Route::middleware(['auth'])->group(function () {
     Route::get('/periode', [PeriodController::class, 'index'])->name('period.index');
@@ -77,6 +81,14 @@ Route::middleware(['auth'])->group(function () {
 });
 
 /**
+ * Kategori & Pengajuan Pengeluaran (Bendahara)
+ */
+Route::middleware(['auth', 'role:bendahara'])->group(function () {
+    Route::resource('categories', CategoryController::class);
+    Route::resource('expense_requests', ExpenseRequestController::class);
+});
+
+/**
  * Kas (Bendahara)
  */
 Route::middleware(['auth', 'role:bendahara'])->group(function () {
@@ -87,7 +99,6 @@ Route::middleware(['auth', 'role:bendahara'])->group(function () {
 
     // Alasan Belum Lunas
     Route::post('/kas/unpaid-reason',       [UnpaidReasonController::class, 'store'])->name('cash.unpaidReason.store');
-    // (opsional jika dipakai): update alasan via PUT
     Route::put ('/kas/unpaid-reason',       [UnpaidReasonController::class, 'update'])->name('cash.unpaidReason.update');
 });
 

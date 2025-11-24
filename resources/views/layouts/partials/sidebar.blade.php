@@ -11,10 +11,11 @@
 
   // Bendahara
   $isKasInput      = request()->routeIs('cash.*');
-  $isKasUnpaid     = request()->routeIs('cash.unpaid*'); // <- perbaikan di sini
+  $isKasUnpaid     = request()->routeIs('cash.unpaid*'); // flag (nanti bisa diarahkan ke halaman belum lunas)
   $kasOpen         = $isKasInput || $isPeriod || $isKasUnpaid;
 
-  $isSpendReq      = request()->routeIs('expense.request.*');
+  // Pengeluaran kas (bendahara)
+  $isSpendReq      = request()->routeIs('expense_requests.*');
   $spendOpen       = $isSpendReq;
 
   // Siswa
@@ -101,6 +102,7 @@
          BENDAHARA
        ========================= --}}
     @if($u && $u->hasRole('bendahara'))
+      {{-- Kas mingguan --}}
       <li class="nav-item">
         <a class="nav-link {{ $kasOpen ? '' : 'collapsed' }}"
            data-bs-toggle="collapse"
@@ -135,6 +137,7 @@
         </div>
       </li>
 
+      {{-- Pengeluaran kas --}}
       <li class="nav-item">
         <a class="nav-link {{ $spendOpen ? '' : 'collapsed' }}"
            data-bs-toggle="collapse"
@@ -147,25 +150,39 @@
         </a>
         <div class="collapse {{ $spendOpen ? 'show' : '' }}" id="spend">
           <ul class="nav flex-column sub-menu">
+
+            {{-- Halaman ajukan pengeluaran --}}
             <li class="nav-item">
-              <a class="nav-link {{ request()->routeIs('expense.request.index') ? 'active' : '' }}"
-                 href="#">
+              <a class="nav-link {{ request()->routeIs('expense_requests.create') ? 'active' : '' }}"
+                 href="{{ route('expense_requests.create') }}">
                 Ajukan Pengeluaran
               </a>
             </li>
+
+            {{-- Halaman daftar/status pengajuan --}}
             <li class="nav-item">
-              <a class="nav-link {{ request()->routeIs('expense.request.history') ? 'active' : '' }}"
-                 href="#">
+              <a class="nav-link {{ request()->routeIs('expense_requests.index') ? 'active' : '' }}"
+                 href="{{ route('expense_requests.index') }}">
                 Status Pengajuan
               </a>
             </li>
+
+            {{-- Realisasi pengeluaran (nanti kalau sudah ada route-nya)
+            <li class="nav-item">
+              <a class="nav-link {{ request()->routeIs('cash_expenses.index') ? 'active' : '' }}"
+                 href="{{ route('cash_expenses.index') }}">
+                Realisasi Pengeluaran
+              </a>
+            </li>
+            --}}
           </ul>
         </div>
       </li>
 
+      {{-- Kategori Pengeluaran --}}
       <li class="nav-item">
         <a class="nav-link {{ request()->routeIs('categories.*') ? 'active' : '' }}"
-           href="#">
+           href="{{ route('categories.index') }}">
           <i class="mdi mdi-shape-outline menu-icon"></i>
           <span class="menu-title">Kategori Pengeluaran</span>
         </a>
