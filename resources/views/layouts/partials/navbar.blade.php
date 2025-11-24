@@ -9,32 +9,40 @@
           </div>
           <div>
             <a class="navbar-brand brand-logo" href="{{ route('dashboard') }}">
-              <img src="assets/images/logo.svg" alt="logo" />
+              <img src="/assets/images/poris-1.png" alt="logo" />
             </a>
             <a class="navbar-brand brand-logo-mini" href="{{ route('dashboard') }}">
-              <img src="assets/images/logo-mini.svg" alt="logo" />
+              <img src="/assets/images/poris-1.png" alt="logo" />
             </a>
           </div>
         </div>
         <div class="navbar-menu-wrapper d-flex align-items-top">
           <ul class="navbar-nav">
             <li class="nav-item fw-semibold d-none d-lg-block ms-0">
-              <h4 class="welcome-text">Good Morning, <span class="text-black fw-bold">{{ auth()->user()->name }}</span></h4>
-              <h4 class="welcome-sub-text">Your performance summary this week </h4>
+            @php $u = auth()->user(); @endphp
+
+            @auth
+                <h4 class="welcome-text">
+                  <span class="text-black fw-bold">{{ $u->name }}</span>
+                </h4>
+            @endauth
+                          {{-- <h4 class="welcome-sub-text">Your performance summary this week </h4> --}}
             </li>
           </ul>
           <ul class="navbar-nav ms-auto">
  
             <li class="nav-item dropdown d-none d-lg-block user-dropdown">
               <a class="nav-link" id="UserDropdown" href="#" data-bs-toggle="dropdown" aria-expanded="false">
-                <img class="img-xs rounded-circle" src="assets/images/faces/face8.jpg" alt="Profile image"> </a>
+                 <div class="rounded-circle d-flex align-items-center justify-content-center bg-primary-subtle text-primary" 
+                      style="width:42px; height:42px;">
+                    <i class="mdi mdi-account-circle fs-5"></i>
+                  </div></a>
               <div class="dropdown-menu dropdown-menu-right navbar-dropdown" aria-labelledby="UserDropdown">
                 <div class="dropdown-header text-center">
-                  <img class="img-md rounded-circle" src="assets/images/faces/face8.jpg" alt="Profile image">
-                  <p class="mb-1 mt-3 fw-semibold">Allen Moreno</p>
-                  <p class="fw-light text-muted mb-0">allenmoreno@gmail.com</p>
+                  <p class="mb-1 mt-3 fw-semibold"> {{ optional($u)->name }}</p>
+                  <p class="fw-light text-muted mb-0"> {{ optional($u)->email }}</p>
                 </div>
-                <a class="dropdown-item"><i class="dropdown-item-icon mdi mdi-account-outline text-primary me-2"></i> My Profile</a>
+                {{-- <a class="dropdown-item"><i class="dropdown-item-icon mdi mdi-account-outline text-primary me-2"></i> My Profile</a> --}}
                 <form method="POST" action="{{ route('logout') }}">
                   @csrf
                   <button type="submit" class="dropdown-item d-flex align-items-center">

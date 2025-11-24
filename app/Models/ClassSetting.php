@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class ClassSetting extends Model
 {
-    protected $fillable = ['class_year_id','kas_nominal','periode','pay_day_hint'];
+    protected $fillable = ['class_year_id','kas_nominal','periode' ];
 
     public function year()
     {

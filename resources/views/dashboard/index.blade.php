@@ -1,431 +1,762 @@
 @extends('layouts.app')
 
 @section('content')
-<div class="container mt-4">
+<div class="container py-4">
 
-    {{-- ========= HERO MINI ========= --}}
-    <div class="hero-soft mb-4 p-3 p-md-4 rounded-4">
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-            <div>
-                <h3 class="mb-1 fw-bold">Selamat datang, {{ optional($u)->name }} 👋</h3>
-                <p class="mb-0 text-muted" style="font-size:.9rem;">
-                    Terakhir login: {{ now()->format('d M Y, H:i') }} WIB
-                </p>
-            </div>
-            <div class="text-end">
-                <a href="{{ route('year.index') }}" class="btn btn-soft-primary rounded-pill px-3">
-                    Kelola Tahun Ajaran
-                </a>
+    @php
+        /** @var \Illuminate\Support\Collection $pendingPengeluaran */
+        /** @var \Illuminate\Support\Collection $siswaBelumBayar */
+        /** @var \Illuminate\Support\Collection $riwayatBayarSaya */
+
+        $u              = $u ?? auth()->user();
+        $classYear      = $classYear ?? null;
+        $period         = $period ?? null;
+        $nominal        = (int)($nominal ?? 0);
+        $saldoKas       = (int)($saldoKas ?? 0);
+        $bulanIniMasuk  = (int)($bulanIniMasuk ?? 0);
+        $bulanIniKeluar = (int)($bulanIniKeluar ?? 0);
+
+        $pendingPengeluaran  = collect($pendingPengeluaran ?? []);
+        $siswaBelumBayar     = collect($siswaBelumBayar ?? []);
+        $riwayatBayarSaya    = collect($riwayatBayarSaya ?? []);
+        $transparansiKelas   = is_array($transparansiKelas ?? null) ? $transparansiKelas : [];
+
+        $mingguBerjalan      = $transparansiKelas['minggu_berjalan'] ?? null;
+        $jumlahBelumBayar    = $siswaBelumBayar->count();
+        $pendingCount        = $pendingPengeluaran->count();
+
+        // data untuk grafik
+        $chartLabels         = $chartLabels ?? [];
+        $chartMasuk          = $chartMasuk ?? [];
+        $chartKeluar         = $chartKeluar ?? [];
+
+        // ringkasan tunggakan siswa (global)
+        $studentTotalSetorAll   = (int)($studentTotalSetorAll ?? 0);
+        $studentKewajibanTotal  = (int)($studentKewajibanTotal ?? 0);
+        $studentTunggakanTotal  = (int)($studentTunggakanTotal ?? 0);
+    @endphp
+
+    {{-- FLASH MESSAGE --}}
+    @if(session('success'))
+        <div class="alert alert-success alert-dismissible fade show mb-3" role="alert">
+            <i class="mdi mdi-check-circle-outline me-1"></i>
+            {{ session('success') }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Tutup"></button>
+        </div>
+    @endif
+    @if($errors->any())
+        <div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+            <i class="mdi mdi-alert-octagon-outline me-1"></i>
+            Terjadi kesalahan:
+            <ul class="mb-0 ps-3 small">
+                @foreach($errors->all() as $e)
+                    <li>{{ $e }}</li>
+                @endforeach
+            </ul>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Tutup"></button>
+        </div>
+    @endif
+
+    {{-- ========== HEADER RINGKAS ========== --}}
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body py-3 py-md-4">
+            <div class="row align-items-center g-3">
+                {{-- Kiri: salam + info kelas --}}
+                <div class="col-lg-8 col-md-7 col-12">
+                    <div class="d-flex align-items-start gap-3">
+                        <div class="rounded-circle bg-primary-subtle text-primary d-flex align-items-center justify-content-center flex-shrink-0"
+                             style="width:48px;height:48px;">
+                            <i class="mdi mdi-account-circle fs-4"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <h4 class="mb-0 fw-semibold text-truncate">
+                                Halo, {{ optional($u)->name }}
+                            </h4>
+                            <div class="text-muted small mt-1">
+                                <i class="mdi mdi-clock-outline me-1"></i>
+                                {{ now()->format('d M Y, H:i') }} WIB
+                            </div>
+
+                            <div class="mt-2 small text-muted">
+                                @if($classYear)
+                                    <span class="me-2">
+                                        <i class="mdi mdi-school-outline me-1"></i>
+                                        {{ $classYear->class_label ?? '-' }}
+                                        ({{ $classYear->academic_year ?? '-' }})
+                                    </span>
+                                @else
+                                    <span class="text-danger">
+                                        <i class="mdi mdi-alert-circle-outline me-1"></i>
+                                        Belum ada tahun ajaran aktif
+                                    </span>
+                                @endif
+
+                                @if($period)
+                                    <span class="ms-2">
+                                        • Minggu #{{ $period->week_no ?? '-' }}
+                                    </span>
+                                @endif
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {{-- Kanan: tombol cepat --}}
+                <div class="col-lg-4 col-md-5 col-12 text-md-end text-start">
+                    <div class="d-flex flex-wrap gap-2 justify-content-md-end justify-content-start">
+                        @if($u && $u->hasRole('guru'))
+                            <a href="{{ route('year.index') }}" class="btn btn-sm btn-outline-primary">
+                                <i class="mdi mdi-calendar-cog-outline me-1"></i> Tahun Ajaran
+                            </a>
+                        @endif
+
+                        @if($u && $u->hasRole('bendahara'))
+                            <a href="{{ route('cash.index') }}" class="btn btn-sm btn-primary">
+                                <i class="mdi mdi-cash-multiple me-1"></i> Input Kas
+                            </a>
+                        @endif
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    {{-- ========= INFORMASI AKUN ========= --}}
-    <div class="card-soft mb-4">
-        <div class="card-soft-body">
-            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-                <h5 class="mb-0">Informasi Akun</h5>
-                <div>
-                    @if($u && ($u->active ?? false))
-                        <span class="badge badge-soft-success">Aktif</span>
-                    @else
-                        <span class="badge badge-soft-danger">Nonaktif</span>
-                    @endif
+    {{-- ========== ROW: RINGKASAN UMUM (SEMUA ROLE) ========== --}}
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card mini-card h-100">
+                <div class="card-body d-flex align-items-center justify-content-between">
+                    <div>
+                        <div class="mini-label">Saldo Kas</div>
+                        <div class="mini-value">
+                            Rp {{ number_format($saldoKas, 0, ',', '.') }}
+                        </div>
+                    </div>
+                    <span class="mini-icon bg-primary-subtle text-primary">
+                        <i class="mdi mdi-wallet-outline"></i>
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mini-card h-100">
+                <div class="card-body d-flex align-items-center justify-content-between">
+                    <div>
+                        <div class="mini-label">Kas Masuk (bulan ini)</div>
+                        <div class="mini-value">
+                            Rp {{ number_format($bulanIniMasuk, 0, ',', '.') }}
+                        </div>
+                    </div>
+                    <span class="mini-icon bg-success-subtle text-success">
+                        <i class="mdi mdi-arrow-down-bold-circle-outline"></i>
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mini-card h-100">
+                <div class="card-body d-flex align-items-center justify-content-between">
+                    <div>
+                        <div class="mini-label">Kas Keluar (bulan ini)</div>
+                        <div class="mini-value">
+                            Rp {{ number_format($bulanIniKeluar, 0, ',', '.') }}
+                        </div>
+                    </div>
+                    <span class="mini-icon bg-danger-subtle text-danger">
+                        <i class="mdi mdi-arrow-up-bold-circle-outline"></i>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{-- ========== GRAFIK (Chart.js) - GURU & BENDAHARA ========== --}}
+    @if($u && ($u->hasRole('guru') || $u->hasRole('bendahara')))
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">
+                    <i class="mdi mdi-chart-line-variant me-1"></i>
+                    Grafik Kas 6 Bulan Terakhir
+                </span>
+                <span class="small text-muted">
+                    Ringkasan total kas masuk & keluar per bulan
+                </span>
+            </div>
+            <div class="card-body">
+                @if(empty($chartLabels))
+                    <p class="text-muted mb-0 small">
+                        Belum ada data kas untuk digrafikkan.
+                    </p>
+                @else
+                    <div style="max-width: 100%; min-height: 220px;">
+                        <canvas id="cashTrendChart" height="120"></canvas>
+                    </div>
+                    <p class="small text-muted mt-2 mb-0">
+                        Grafik ini membantu guru & bendahara memantau tren kas kelas per bulan.
+                    </p>
+                @endif
+            </div>
+        </div>
+    @endif
+
+    {{-- ===================================================== --}}
+    {{-- BENDAHARA PANEL                                       --}}
+    {{-- ===================================================== --}}
+    @if($u && $u->hasRole('bendahara'))
+        @php
+            $periodeLabel = $period
+                ? \Carbon\Carbon::parse($period->date_start)->translatedFormat('d M Y') . ' – ' .
+                  \Carbon\Carbon::parse($period->date_end)->translatedFormat('d M Y')
+                : '—';
+
+            $isOpen = $period && $period->status === 'open';
+        @endphp
+
+        <div class="row g-3 mb-4">
+            <div class="col-lg-8">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span class="fw-semibold">
+                            <i class="mdi mdi-cash-register me-1"></i>
+                            Ringkasan Minggu Berjalan (Bendahara)
+                        </span>
+                        @if($period)
+                            <span class="badge rounded-pill {{ $isOpen ? 'bg-success' : 'bg-secondary' }}">
+                                {{ strtoupper($period->status) }} · #{{ $period->week_no }}
+                            </span>
+                        @endif
+                    </div>
+                    <div class="card-body">
+                        @if(!$classYear)
+                            <p class="text-muted mb-0">
+                                Belum ada tahun ajaran aktif. Minta guru mengaktifkan tahun ajaran terlebih dahulu.
+                            </p>
+                        @elseif(!$period)
+                            <p class="text-muted mb-0">
+                                Belum ada periode kas yang <strong>OPEN</strong>. Minta guru/bendahara membuka periode di menu
+                                <em>Periode / Minggu Kas</em>.
+                            </p>
+                        @else
+                            <div class="row g-3 mb-3">
+                                <div class="col-sm-4">
+                                    <div class="border rounded-3 p-2 bg-light">
+                                        <div class="small text-muted">Minggu ke</div>
+                                        <div class="fw-semibold fs-6">#{{ $period->week_no }}</div>
+                                        <div class="text-muted small">
+                                            {{ $periodeLabel }}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-sm-4">
+                                    <div class="border rounded-3 p-2 bg-light">
+                                        <div class="small text-muted">Nominal / minggu</div>
+                                        <div class="fw-semibold clamp-number">
+                                            @if($nominal > 0)
+                                                Rp {{ number_format($nominal, 0, ',', '.') }}
+                                            @else
+                                                <span class="text-danger">Belum diset</span>
+                                            @endif
+                                        </div>
+                                        @if($nominal <= 0)
+                                            <div class="small text-muted">
+                                                Atur di menu Tahun Ajaran.
+                                            </div>
+                                        @endif
+                                    </div>
+                                </div>
+                                <div class="col-sm-4">
+                                    <div class="border rounded-3 p-2 bg-light">
+                                        <div class="small text-muted">Status kelas</div>
+                                        <div class="fw-semibold">
+                                            {{ $jumlahBelumBayar }} siswa belum bayar
+                                        </div>
+                                        <div class="small text-muted">
+                                            {{ $pendingCount }} pengeluaran pending
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="d-flex flex-wrap gap-2">
+                                <a href="{{ route('cash.index', ['only' => 'belum']) }}" class="btn btn-sm btn-primary">
+                                    <i class="mdi mdi-cash-plus me-1"></i> Catat pembayaran
+                                </a>
+                                <a href="{{ route('period.index') }}" class="btn btn-sm btn-outline-secondary">
+                                    <i class="mdi mdi-calendar-week-outline me-1"></i> Kelola periode
+                                </a>
+                            </div>
+                        @endif
+                    </div>
                 </div>
             </div>
 
-            <div class="row g-3">
-                <div class="col-lg-6">
-                    <ul class="list-unstyled mb-0 small">
-                        <li class="mb-2"><span class="text-muted">Nama</span> <div class="fw-semibold">{{ optional($u)->name }}</div></li>
-                        <li class="mb-2"><span class="text-muted">Email</span> <div class="fw-semibold">{{ optional($u)->email }}</div></li>
-                        <li><span class="text-muted">Jenis Kelamin</span> <div class="fw-semibold">{{ $u->gender ?? '-' }}</div></li>
-                    </ul>
-                </div>
-                <div class="col-lg-6">
-                    <div class="d-flex flex-wrap gap-2 align-items-center">
-                        <div>
-                            <div class="text-muted small mb-1">Role (Spatie)</div>
-                            <span class="badge badge-soft-success">
-                                {{ $u ? $u->getRoleNames()->implode(', ') : '-' }}
+            {{-- Kartu kecil: jumlah belum bayar + pending --}}
+            <div class="col-lg-4">
+                <div class="card mb-3 h-100">
+                    <div class="card-header fw-semibold">
+                        <i class="mdi mdi-information-outline me-1"></i>
+                        Angka Singkat
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-muted small">Siswa belum bayar</span>
+                            <span class="badge bg-warning text-dark">
+                                {{ $jumlahBelumBayar }} siswa
+                            </span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-muted small">Pengeluaran pending</span>
+                            <span class="badge bg-info text-dark">
+                                {{ $pendingCount }} request
                             </span>
                         </div>
                     </div>
-                    <div class="mt-3">
-                        <a href="{{ route('year.index') }}" class="btn btn-outline-primary rounded-pill btn-sm">
-                            Kelola Tahun Ajaran
-                        </a>
-                    </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    {{-- ===================== DASHBOARD UNTUK GURU ===================== --}}
-    @if($u && $u->hasRole('guru'))
-        <div class="mb-4">
-            <h5 class="mb-3">📊 Ringkasan Kelas (Guru / Wali Kelas)</h5>
-
-            {{-- Kartu statistik --}}
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <div class="stat-card h-100">
-                        <div class="stat-icon">
-                            <i class="mdi mdi-cash-multiple"></i>
-                        </div>
-                        <div class="stat-body">
-                            <div class="stat-label">Saldo Kas Saat Ini</div>
-                            <div class="stat-value">Rp {{ number_format($saldoKas, 0, ',', '.') }}</div>
-                            <div class="stat-hint">Update minggu ke-{{ $transparansiKelas['minggu_berjalan'] }}</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="stat-card h-100">
-                        <div class="stat-icon">
-                            <i class="mdi mdi-timer-sand"></i>
-                        </div>
-                        <div class="stat-body">
-                            <div class="stat-label">Pengeluaran Pending</div>
-                            <div class="stat-value">{{ $pendingPengeluaran->count() }} request</div>
-                            <div class="stat-hint">Menunggu persetujuan Anda</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="stat-card h-100">
-                        <div class="stat-icon">
-                            <i class="mdi mdi-chart-line"></i>
-                        </div>
-                        <div class="stat-body">
-                            <div class="stat-label">Laporan Bulan Ini</div>
-                            <div class="d-flex flex-wrap gap-4 align-items-center">
-                                <div>
-                                    <div class="fw-semibold">Masuk</div>
-                                    <div class="stat-mini">Rp {{ number_format($bulanIniMasuk, 0, ',', '.') }}</div>
-                                </div>
-                                <div>
-                                    <div class="fw-semibold">Keluar</div>
-                                    <div class="stat-mini">Rp {{ number_format($bulanIniKeluar, 0, ',', '.') }}</div>
-                                </div>
-                            </div>
-                            <a href="#" class="btn btn-soft-secondary btn-sm rounded-pill mt-2">
-                                <i class="mdi mdi-magnify me-1"></i> Lihat Laporan Lengkap
-                            </a>
-                        </div>
-                    </div>
-                </div>
+        {{-- Tabel siswa belum bayar --}}
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">
+                    <i class="mdi mdi-account-alert-outline me-1"></i>
+                    Siswa Belum Bayar Minggu Ini
+                </span>
+                <span class="small text-muted">
+                    Total: {{ $jumlahBelumBayar }} siswa
+                </span>
             </div>
-
-            {{-- Tabel detail pengeluaran pending --}}
-            <div class="card-soft mt-4">
-                <div class="card-soft-body">
-                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-                        <h6 class="mb-0">Butuh Persetujuan Anda</h6>
-                        <span class="badge badge-soft-warning">Pending: {{ $pendingPengeluaran->count() }}</span>
-                    </div>
-
-                    @if($pendingPengeluaran->count())
-                        <div class="table-responsive">
-                            <table class="table table-sm align-middle table-soft mb-0">
-                                <thead>
+            <div class="card-body p-0">
+                @if($jumlahBelumBayar === 0)
+                    <p class="text-muted text-center my-3">
+                        Semua siswa sudah membayar kas minggu ini.
+                    </p>
+                @else
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Nama</th>
+                                    <th class="text-center" style="width:120px;">Minggu ke</th>
+                                    <th class="text-end" style="width:180px;">Kurang</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($siswaBelumBayar as $row)
+                                    @php
+                                        $nama     = $row['nama'] ?? '-';
+                                        $kurang   = (int)($row['nominal'] ?? 0);
+                                        $mingguKe = $row['minggu_ke'] ?? $mingguBerjalan;
+                                    @endphp
                                     <tr>
-                                        <th>Deskripsi</th>
-                                        <th class="text-end">Nominal</th>
-                                        <th class="text-center">Status</th>
-                                        <th class="text-end">Aksi</th>
+                                        <td class="text-truncate">{{ $nama }}</td>
+                                        <td class="text-center">{{ $mingguKe }}</td>
+                                        <td class="text-end">
+                                            Rp {{ number_format($kurang, 0, ',', '.') }}
+                                        </td>
                                     </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach($pendingPengeluaran as $p)
-                                        <tr>
-                                            <td>{{ $p['deskripsi'] }}</td>
-                                            <td class="text-end">Rp {{ number_format($p['nominal'], 0, ',', '.') }}</td>
-                                            <td class="text-center">
-                                                <span class="badge badge-soft-warning">{{ $p['status'] }}</span>
-                                            </td>
-                                            <td class="text-end">
-                                                <div class="btn-group-soft">
-                                                    <button class="btn btn-success btn-sm rounded-pill">
-                                                        <i class="mdi mdi-check-circle-outline me-1"></i> Setujui
-                                                    </button>
-                                                    <button class="btn btn-outline-danger btn-sm rounded-pill">
-                                                        <i class="mdi mdi-close-circle-outline me-1"></i> Tolak
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                        </div>
-                    @else
-                        <p class="text-muted mb-0 small">Tidak ada request pengeluaran.</p>
-                    @endif
-                </div>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
             </div>
         </div>
     @endif
 
-    {{-- ===================== DASHBOARD UNTUK BENDAHARA ===================== --}}
-    @if($u && $u->hasRole('bendahara'))
-        <div class="mb-4">
-            <h5 class="mb-3">💼 Panel Bendahara</h5>
-
-            {{-- Kartu statistik --}}
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <div class="stat-card h-100">
-                        <div class="stat-icon">
-                            <i class="mdi mdi-wallet"></i>
-                        </div>
-                        <div class="stat-body">
-                            <div class="stat-label">Saldo Aktif</div>
-                            <div class="stat-value">Rp {{ number_format($saldoKas, 0, ',', '.') }}</div>
-                            <div class="stat-hint">Uang kas yang masih tersedia</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="stat-card h-100">
-                        <div class="stat-icon">
-                            <i class="mdi mdi-alert-circle-outline"></i>
-                        </div>
-                        <div class="stat-body">
-                            <div class="stat-label">Siswa Belum Bayar</div>
-                            <div class="stat-value">{{ $siswaBelumBayar->count() }} siswa</div>
-                            <div class="stat-hint">Minggu ke-{{ $transparansiKelas['minggu_berjalan'] }}</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="stat-card h-100">
-                        <div class="stat-icon">
-                            <i class="mdi mdi-check-decagram-outline"></i>
-                        </div>
-                        <div class="stat-body">
-                            <div class="stat-label">Request ACC</div>
-                            <div class="stat-value">{{ $pendingPengeluaran->count() }} pending</div>
-                            <div class="stat-hint">Menunggu persetujuan guru</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {{-- Tabel siswa belum bayar --}}
-            <div class="card-soft mt-4">
-                <div class="card-soft-body">
-                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-                        <h6 class="mb-0">Siswa Belum Lunas Minggu Ini</h6>
-                        <span class="badge badge-soft-danger">{{ $siswaBelumBayar->count() }} siswa</span>
-                    </div>
-
-                    @if($siswaBelumBayar->count())
-                        <div class="table-responsive">
-                            <table class="table table-sm align-middle table-soft mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>Nama</th>
-                                        <th class="text-center">Minggu Ke-</th>
-                                        <th class="text-end">Kurang</th>
-                                        <th class="text-end">Aksi</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach($siswaBelumBayar as $t)
-                                        <tr>
-                                            <td>{{ $t['nama'] }}</td>
-                                            <td class="text-center">{{ $t['minggu_ke'] }}</td>
-                                            <td class="text-end">Rp {{ number_format($t['nominal'], 0, ',', '.') }}</td>
-                                            <td class="text-end">
-                                                <div class="btn-group-soft">
-                                                    <button class="btn btn-outline-primary btn-sm rounded-pill">
-                                                        <i class="mdi mdi-bell-ring-outline me-1"></i> Tagih
-                                                    </button>
-                                                    <button class="btn btn-soft-success btn-sm rounded-pill">
-                                                        <i class="mdi mdi-check-circle-outline me-1"></i> Tandai Lunas
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                        </div>
-                    @else
-                        <p class="text-muted mb-0 small">Semua siswa sudah bayar 🎉</p>
-                    @endif
-                </div>
-            </div>
-        </div>
-    @endif
-
-    {{-- ===================== DASHBOARD UNTUK SISWA ===================== --}}
+    {{-- ===================================================== --}}
+    {{-- SISWA PANEL                                           --}}
+    {{-- ===================================================== --}}
     @if($u && $u->hasRole('siswa'))
-        <div class="mb-4">
-            <h5 class="mb-3">📒 Ringkasan Kas Saya</h5>
+        @php
+            $mingguSiswa        = $mingguBerjalan;
+            $setorMingguIni     = (int)$riwayatBayarSaya->where('minggu_ke', $mingguSiswa)->sum('jumlah');
+            $statusMingguIni    = ($nominal > 0 && $setorMingguIni >= $nominal) ? 'LUNAS' : 'BELUM';
+            $progressPct        = ($nominal > 0)
+                                  ? round(100 * min(1, $setorMingguIni / max(1, $nominal)))
+                                  : 0;
+            $sisaMingguIni      = max(0, $nominal - $setorMingguIni);
 
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <div class="stat-card h-100">
-                        <div class="stat-icon">
-                            <i class="mdi mdi-cash-multiple"></i>
-                        </div>
-                        <div class="stat-body">
-                            <div class="stat-label">Total yang Sudah Disetor</div>
-                            @php $totalSetor = $riwayatBayarSaya->sum('jumlah'); @endphp
-                            <div class="stat-value">Rp {{ number_format($totalSetor, 0, ',', '.') }}</div>
-                            <div class="stat-hint">Sampai minggu ke-{{ $transparansiKelas['minggu_berjalan'] }}</div>
-                        </div>
-                    </div>
-                </div>
+            $totalSetor         = (int)$riwayatBayarSaya->sum('jumlah');   // 10 transaksi terakhir
+            $countTransaksi     = $riwayatBayarSaya->count();
 
-                <div class="col-md-8">
-                    <div class="card-soft h-100">
-                        <div class="card-soft-body">
-                            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-                                <div class="text-muted small">Transparansi Kelas</div>
-                                <span class="badge badge-soft-primary">Rekap Singkat</span>
-                            </div>
-                            <div class="d-flex flex-wrap gap-4">
-                                <div>
-                                    <div class="text-muted small">Total Masuk</div>
-                                    <div class="fw-bold fs-6">Rp {{ number_format($transparansiKelas['total_masuk'], 0, ',', '.') }}</div>
-                                </div>
-                                <div>
-                                    <div class="text-muted small">Total Keluar</div>
-                                    <div class="fw-bold fs-6">Rp {{ number_format($transparansiKelas['total_keluar'], 0, ',', '.') }}</div>
-                                </div>
-                                <div>
-                                    <div class="text-muted small">Saldo Sisa</div>
-                                    <div class="fw-bold fs-6">Rp {{ number_format($transparansiKelas['saldo_sisa'], 0, ',', '.') }}</div>
-                                </div>
-                            </div>
-                            <p class="text-muted mt-2 mb-0 small">
-                                Kamu dan teman-teman bisa lihat ke mana uang kas dipakai. Transparan 👍
-                            </p>
-                        </div>
-                    </div>
-                </div>
+            $totalMasukKelas    = (int)($transparansiKelas['total_masuk']  ?? 0);
+            $totalKeluarKelas   = (int)($transparansiKelas['total_keluar'] ?? 0);
+            $saldoSisaKelas     = (int)($transparansiKelas['saldo_sisa']   ?? 0);
+
+            $periodeLabelSiswa = $period
+                ? \Carbon\Carbon::parse($period->date_start)->translatedFormat('d M Y') . ' – ' .
+                  \Carbon\Carbon::parse($period->date_end)->translatedFormat('d M Y')
+                : '—';
+        @endphp
+
+        <div class="card mb-4">
+            <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="mdi mdi-cash-multiple me-1"></i>
+                    Status Kas Saya (Siswa)
+                </span>
             </div>
+            <div class="card-body">
+                @if(!$classYear || !$period)
+                    <p class="text-muted mb-0">
+                        Data kas belum tersedia. Tunggu sampai wali kelas mengaktifkan tahun ajaran dan periode kas.
+                    </p>
+                @else
+                    <div class="row g-3">
+                        {{-- Kartu progress minggu ini --}}
+                        <div class="col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <div>
+                                        <div class="small text-muted">Minggu ke</div>
+                                        <div class="fw-semibold fs-6">
+                                            #{{ $mingguSiswa ?? '-' }}
+                                        </div>
+                                        <div class="text-muted small">
+                                            {{ $periodeLabelSiswa }}
+                                        </div>
+                                    </div>
+                                    <div class="text-end">
+                                        <div class="small text-muted mb-1">Status</div>
+                                        <span class="badge rounded-pill {{ $statusMingguIni === 'LUNAS' ? 'bg-success' : 'bg-warning text-dark' }}">
+                                            {{ $statusMingguIni }}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="mt-3">
+                                    <div class="d-flex justify-content-between small mb-1">
+                                        <span>Progress minggu ini</span>
+                                        <span>{{ $progressPct }}%</span>
+                                    </div>
+                                    <div class="progress" style="height:8px;">
+                                        <div class="progress-bar {{ $statusMingguIni === 'LUNAS' ? 'bg-success' : '' }}"
+                                             role="progressbar"
+                                             style="width: {{ $progressPct }}%;"
+                                             aria-valuenow="{{ $progressPct }}"
+                                             aria-valuemin="0"
+                                             aria-valuemax="100">
+                                        </div>
+                                    </div>
 
-            {{-- Riwayat bayar saya --}}
-            <div class="card-soft mt-4">
-                <div class="card-soft-body">
-                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-                        <h6 class="mb-0">Riwayat Setoran Saya</h6>
-                        <span class="badge badge-soft-secondary">{{ $riwayatBayarSaya->count() }} transaksi</span>
+                                    <ul class="list-unstyled small mt-2 mb-0">
+                                        <li>Nominal / minggu: <strong>Rp {{ number_format($nominal,0,',','.') }}</strong></li>
+                                        <li>Disetor minggu ini: <strong>Rp {{ number_format($setorMingguIni,0,',','.') }}</strong></li>
+                                        <li>
+                                            Sisa:
+                                            <strong>
+                                                @if($statusMingguIni === 'LUNAS')
+                                                    Lunas
+                                                @else
+                                                    Rp {{ number_format($sisaMingguIni,0,',','.') }}
+                                                @endif
+                                            </strong>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        {{-- Transparansi kelas + ringkasan tunggakan --}}
+                        <div class="col-md-6">
+                            <div class="border rounded-3 p-3 h-100 d-flex flex-column gap-3">
+                                <div>
+                                    <div class="small text-muted mb-1">Transparansi kas kelas</div>
+                                    <ul class="list-unstyled mb-2">
+                                        <li class="d-flex justify-content-between">
+                                            <span>Total masuk</span>
+                                            <span class="fw-semibold">
+                                                Rp {{ number_format($totalMasukKelas,0,',','.') }}
+                                            </span>
+                                        </li>
+                                        <li class="d-flex justify-content-between">
+                                            <span>Total keluar</span>
+                                            <span class="fw-semibold">
+                                                Rp {{ number_format($totalKeluarKelas,0,',','.') }}
+                                            </span>
+                                        </li>
+                                        <li class="d-flex justify-content-between">
+                                            <span>Saldo sisa</span>
+                                            <span class="fw-semibold">
+                                                Rp {{ number_format($saldoSisaKelas,0,',','.') }}
+                                            </span>
+                                        </li>
+                                    </ul>
+                                </div>
+
+                                {{-- RINGKASAN CICILAN / TUNGGAKAN --}}
+                                <div class="border-top pt-2">
+                                    <div class="small text-muted mb-1">
+                                        Ringkasan kewajiban & cicilan kamu
+                                    </div>
+                                    @if($nominal <= 0 || $studentKewajibanTotal === 0)
+                                        <p class="small text-muted mb-0">
+                                            Kewajiban total belum bisa dihitung karena nominal/minggu belum diatur
+                                            atau periode kas belum berjalan penuh.
+                                        </p>
+                                    @else
+                                        <ul class="list-unstyled small mb-2">
+                                            <li class="d-flex justify-content-between">
+                                                <span>Kewajiban s/d minggu ini</span>
+                                                <span class="fw-semibold">
+                                                    Rp {{ number_format($studentKewajibanTotal,0,',','.') }}
+                                                </span>
+                                            </li>
+                                            <li class="d-flex justify-content-between">
+                                                <span>Total setor semua minggu</span>
+                                                <span class="fw-semibold">
+                                                    Rp {{ number_format($studentTotalSetorAll,0,',','.') }}
+                                                </span>
+                                            </li>
+                                            <li class="d-flex justify-content-between">
+                                                <span>Sisa tunggakan</span>
+                                                <span class="fw-semibold {{ $studentTunggakanTotal > 0 ? 'text-danger' : 'text-success' }}">
+                                                    @if($studentTunggakanTotal > 0)
+                                                        Rp {{ number_format($studentTunggakanTotal,0,',','.') }}
+                                                    @else
+                                                        Tidak ada tunggakan
+                                                    @endif
+                                                </span>
+                                            </li>
+                                        </ul>
+                                        <p class="small text-muted mb-0">
+                                            Angka ini sudah otomatis menghitung pembayaran cicilan dari minggu-minggu sebelumnya.
+                                        </p>
+                                    @endif
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    @if($riwayatBayarSaya->count())
+                    {{-- Riwayat setoran saya --}}
+                    <hr class="my-3">
+                    <h6 class="fw-semibold mb-2">
+                        <i class="mdi mdi-receipt-text-outline me-1"></i>
+                        Riwayat Setoran Terakhir
+                    </h6>
+
+                    @if($countTransaksi === 0)
+                        <p class="text-muted mb-0 small">
+                            Belum ada pembayaran tercatat atas nama kamu.
+                        </p>
+                    @else
                         <div class="table-responsive">
-                            <table class="table table-sm align-middle table-soft mb-0">
-                                <thead>
+                            <table class="table table-sm align-middle mb-0">
+                                <thead class="table-light">
                                     <tr>
                                         <th>Tanggal</th>
-                                        <th class="text-center">Minggu Ke-</th>
-                                        <th class="text-end">Jumlah</th>
-                                        <th class="text-center">Status</th>
+                                        <th class="text-center" style="width:110px;">Minggu ke</th>
+                                        <th class="text-end" style="width:160px;">Jumlah</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    @foreach($riwayatBayarSaya as $r)
+                                    @foreach($riwayatBayarSaya as $row)
+                                        @php
+                                            $tgl = \Carbon\Carbon::parse($row['tanggal'] ?? now())->translatedFormat('d M Y');
+                                            $mg  = $row['minggu_ke'] ?? '-';
+                                            $jm  = (int)($row['jumlah'] ?? 0);
+                                        @endphp
                                         <tr>
-                                            <td>{{ \Carbon\Carbon::parse($r['tanggal'])->format('d M Y') }}</td>
-                                            <td class="text-center">{{ $r['minggu_ke'] }}</td>
-                                            <td class="text-end">Rp {{ number_format($r['jumlah'], 0, ',', '.') }}</td>
-                                            <td class="text-center">
-                                                <span class="badge bg-success">{{ $r['status'] }}</span>
+                                            <td>{{ $tgl }}</td>
+                                            <td class="text-center">{{ $mg }}</td>
+                                            <td class="text-end">
+                                                Rp {{ number_format($jm, 0, ',', '.') }}
                                             </td>
                                         </tr>
                                     @endforeach
                                 </tbody>
                             </table>
                         </div>
-                    @else
-                        <p class="text-muted mb-0 small">Belum ada pembayaran tercatat.</p>
                     @endif
+                @endif
+            </div>
+        </div>
+    @endif
+
+    {{-- ===================================================== --}}
+    {{-- GURU PANEL                                            --}}
+    {{-- ===================================================== --}}
+    @if($u && $u->hasRole('guru'))
+        @php $pendingCount = $pendingPengeluaran->count(); @endphp
+
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">
+                    <i class="mdi mdi-chart-box-outline me-1"></i>
+                    Ringkasan Kelas (Guru)
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <div class="border rounded-3 p-3 h-100">
+                            <div class="small text-muted">Saldo kas saat ini</div>
+                            <div class="fw-semibold fs-5">
+                                Rp {{ number_format($saldoKas, 0, ',', '.') }}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded-3 p-3 h-100">
+                            <div class="small text-muted">Pengeluaran pending</div>
+                            <div class="fw-semibold fs-5">{{ $pendingCount }} request</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded-3 p-3 h-100">
+                            <div class="small text-muted">Laporan bulan ini</div>
+                            <div class="d-flex justify-content-between small">
+                                <span>Masuk</span>
+                                <span class="fw-semibold">
+                                    Rp {{ number_format($bulanIniMasuk, 0, ',', '.') }}
+                                </span>
+                            </div>
+                            <div class="d-flex justify-content-between small">
+                                <span>Keluar</span>
+                                <span class="fw-semibold">
+                                    Rp {{ number_format($bulanIniKeluar, 0, ',', '.') }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+
+                <h6 class="fw-semibold mb-2">
+                    <i class="mdi mdi-clipboard-text-outline me-1"></i>
+                    Pengeluaran Menunggu Persetujuan
+                </h6>
+
+                @if($pendingCount === 0)
+                    <p class="text-muted mb-0 small">
+                        Tidak ada pengajuan pengeluaran yang pending.
+                    </p>
+                @else
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Deskripsi</th>
+                                    <th class="text-end" style="width:160px;">Nominal</th>
+                                    <th class="text-center" style="width:120px;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($pendingPengeluaran as $p)
+                                    <tr>
+                                        <td class="text-truncate">{{ $p->deskripsi ?? '-' }}</td>
+                                        <td class="text-end">
+                                            Rp {{ number_format((int)($p->nominal ?? 0), 0, ',', '.') }}
+                                        </td>
+                                        <td class="text-center">
+                                            <span class="badge bg-warning text-dark">
+                                                {{ strtoupper($p->status ?? 'pending') }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
             </div>
         </div>
     @endif
 
 </div>
 
-{{-- ============== STYLE UPGRADE (SOFT UI) ============== --}}
+{{-- CSS KECIL KHUSUS HALAMAN --}}
 <style>
-    :root{
-        --soft-primary: #2563eb;
-        --soft-bg: #f8fafc;
-        --soft-border: #e8edf4;
-        --soft-text: #667085;
-        --soft-success: #22c55e;
-        --soft-warning: #f59e0b;
-        --soft-danger: #ef4444;
+    .mini-card {
+        border-radius: .9rem;
+        border: 1px solid #e5e7eb;
     }
-
-    .hero-soft{
-        background: linear-gradient(135deg, rgba(37,99,235,.08), rgba(37,99,235,.03));
-        border:1px solid var(--soft-border);
+    .mini-label {
+        font-size: .8rem;
+        color: #6b7280;
     }
-    .card-soft{ background:#fff; border:1px solid var(--soft-border); border-radius:1rem; }
-    .card-soft-body{ padding:1.25rem; }
-
-    .badge-soft-primary{ background:rgba(37,99,235,.12); color:#1d4ed8; border:1px solid rgba(37,99,235,.25); }
-    .badge-soft-success{ background:rgba(34,197,94,.12); color:#15803d; border:1px solid rgba(34,197,94,.25); }
-    .badge-soft-secondary{ background:#f2f4f7; color:#475467; border:1px solid #e7eaee; }
-    .badge-soft-warning{ background:rgba(245,158,11,.14); color:#b45309; border:1px solid rgba(245,158,11,.25); }
-    .badge-soft-danger{ background:rgba(239,68,68,.12); color:#b91c1c; border:1px solid rgba(239,68,68,.25); }
-
-    .btn-soft-primary{
-        background:rgba(37,99,235,.08); color:var(--soft-primary); border:1px solid rgba(37,99,235,.25);
+    .mini-value {
+        font-size: 1.2rem;
+        font-weight: 700;
     }
-    .btn-soft-primary:hover{ background:var(--soft-primary); color:#fff; }
-    .btn-soft-success{
-        background:rgba(34,197,94,.08); color:#15803d; border:1px solid rgba(34,197,94,.25);
+    .mini-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: .9rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
     }
-    .btn-soft-success:hover{ background:#16a34a; color:#fff; }
-    .btn-soft-secondary{
-        background:#f3f5f8; color:#374151; border:1px solid #e5e9f0;
-    }
-    .btn-soft-secondary:hover{ background:#e8ecf3; }
-
-    .table-soft thead{ background:#f7f9fc; }
-    .table-soft thead th{ color:#64748b; font-weight:600; border-bottom:1px solid var(--soft-border) !important; }
-    .table-soft tbody td{ border-top:1px solid var(--soft-border); }
-
-    .btn-group-soft .btn{ margin-left:.25rem; }
-    .btn-group-soft .btn:first-child{ margin-left:0; }
-
-    /* ===== Stat Cards ===== */
-    .stat-card{
-        display:flex; gap:12px; padding:16px; border:1px solid var(--soft-border);
-        border-radius:1rem; background:#fff; box-shadow: 0 6px 20px rgba(2,6,23,.03);
-    }
-    .stat-icon{
-        width:42px; height:42px; border-radius:12px; display:grid; place-items:center;
-        flex:0 0 auto; color:#fff; background:var(--soft-primary);
-        box-shadow:0 10px 18px rgba(37,99,235,.15);
-    }
-    .stat-icon i{
-        font-size:22px; line-height:1; color:#fff;
-    }
-
-    .stat-body{ flex:1; }
-    .stat-label{ font-size:.8rem; color:var(--soft-text); margin-bottom:2px; }
-    .stat-value{ font-size:1.35rem; font-weight:700; line-height:1.2; }
-    .stat-hint{ color:var(--soft-text); font-size:.8rem; margin-top:2px; }
-    .stat-mini{ font-size:1rem; color:#111827; }
-
-    /* Inputs hover/focus */
-    .form-control:focus, .form-select:focus, .btn:focus{
-        box-shadow:0 0 0 .2rem rgba(37,99,235,.15);
-        border-color:var(--soft-primary);
-    }
-
-    @media (max-width:576px){
-        .card-soft-body{ padding:1rem; }
-        .stat-value{ font-size:1.2rem; }
+    .clamp-number {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 </style>
+
+{{-- SCRIPT GRAFIK Chart.js --}}
+@if($u && ($u->hasRole('guru') || $u->hasRole('bendahara')) && !empty($chartLabels))
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const ctx = document.getElementById('cashTrendChart');
+            if (!ctx) return;
+
+            const labels = @json($chartLabels);
+            const dataMasuk = @json($chartMasuk);
+            const dataKeluar = @json($chartKeluar);
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Kas Masuk',
+                            data: dataMasuk,
+                            backgroundColor: 'rgba(34,197,94,0.6)',
+                            borderRadius: 8,
+                        },
+                        {
+                            label: 'Kas Keluar',
+                            data: dataKeluar,
+                            backgroundColor: 'rgba(239,68,68,0.6)',
+                            borderRadius: 8,
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function (value) {
+                                    // format ke "Rp X.xxx"
+                                    const n = (value || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+                                    return 'Rp ' + n;
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (ctx) {
+                                    const val = ctx.parsed.y || 0;
+                                    const n = val.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+                                    return ctx.dataset.label + ': Rp ' + n;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    </script>
+@endif
 @endsection

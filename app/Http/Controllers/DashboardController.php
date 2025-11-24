@@ -8,7 +8,7 @@ use Carbon\Carbon;
 
 class DashboardController extends Controller
 {
-    public function index (Request $request)
+    public function index(Request $request)
     {
         $u = $request->user();
 
@@ -56,6 +56,7 @@ class DashboardController extends Controller
                     'week_no',
                     'date_start',
                     'date_end',
+                    'status',
                 ]);
         }
 
@@ -64,16 +65,10 @@ class DashboardController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | 3. Hitung kas masuk & kas keluar
+        | 3. Hitung kas masuk & kas keluar (semua waktu, per tahun ajaran)
         |--------------------------------------------------------------------------
-        | kas masuk  = sum(cash_payments.amount)
-        | kas keluar = sum(cash_expenses.amount)
-        | semua dibatasi per class_year_id
-        |
-        | NOTE: cash_payments TIDAK punya kolom status → berarti semua tercatat dianggap sah.
-        | cash_expenses adalah pengeluaran yang SUDAH APPROVED.
         */
-        $totalMasuk = 0;
+        $totalMasuk  = 0;
         $totalKeluar = 0;
 
         if ($classYearId) {
@@ -92,9 +87,6 @@ class DashboardController extends Controller
         |--------------------------------------------------------------------------
         | 4. Pending pengeluaran
         |--------------------------------------------------------------------------
-        | expense_requests:
-        |   - status = 'pending'
-        |   - class_year_id = kelas aktif
         */
         $pendingPengeluaran = collect();
         if ($classYearId) {
@@ -116,12 +108,9 @@ class DashboardController extends Controller
         |--------------------------------------------------------------------------
         | 5. Laporan cepat bulan ini (buat guru)
         |--------------------------------------------------------------------------
-        | Kita pakai created_at transaksi bulan ini, per class_year_id.
-        | Kalau kamu mau pakai kolom date/request_date instead of created_at,
-        | gampang diganti nanti.
         */
-        $now = Carbon::now();
-        $bulanIniMasuk = 0;
+        $now            = Carbon::now();
+        $bulanIniMasuk  = 0;
         $bulanIniKeluar = 0;
 
         if ($classYearId) {
@@ -142,9 +131,6 @@ class DashboardController extends Controller
         |--------------------------------------------------------------------------
         | 6. Ambil nominal kas per minggu dari class_settings
         |--------------------------------------------------------------------------
-        | class_settings:
-        |   - class_year_id
-        |   - kas_nominal
         */
         $nominalPerMinggu = null;
         if ($classYearId) {
@@ -157,17 +143,6 @@ class DashboardController extends Controller
         |--------------------------------------------------------------------------
         | 7. Siswa belum bayar minggu ini (bendahara dashboard)
         |--------------------------------------------------------------------------
-        | Cara pikir:
-        | - ambil semua siswa aktif di student_enrollments untuk class_year_id aktif
-        | - untuk masing-masing siswa, cek apakah ADA baris cash_payments
-        |   di periodeAktif (period_id = periodeIdAktif)
-        | - kalau TIDAK ADA -> dia masuk list belum bayar
-        |
-        | Column penting:
-        |   student_enrollments.id            = enrollment_id
-        |   student_enrollments.student_user_id (link ke users.id)
-        |   cash_payments.enrollment_id
-        |   cash_payments.period_id
         */
         $siswaBelumBayar = collect();
 
@@ -182,7 +157,7 @@ class DashboardController extends Controller
                     'users.name as nama_siswa',
                 ]);
 
-            // buat map siapa aja yang SUDAH bayar di periode ini
+            // siapa saja yang SUDAH bayar di periode ini
             $sudahBayarEnrollmentIds = DB::table('cash_payments')
                 ->where('class_year_id', $classYearId)
                 ->where('period_id', $periodeIdAktif)
@@ -206,15 +181,8 @@ class DashboardController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | 8. Riwayat pembayaran saya (dashboard siswa)
+        | 8. Riwayat pembayaran saya (dashboard siswa, 10 terakhir)
         |--------------------------------------------------------------------------
-        | Kita ambil cash_payments milik siswa login.
-        | Hubungannya:
-        |   - user siswa -> student_enrollments (by student_user_id)
-        |   - cash_payments.enrollment_id -> student_enrollments.id
-        |   - cash_payments.period_id -> cash_periods.id
-        |
-        | Kita hanya tampilkan transaksi kelas aktif ini.
         */
         $riwayatBayarSaya = collect();
         if ($u && $classYearId) {
@@ -235,14 +203,57 @@ class DashboardController extends Controller
                         'tanggal'    => $row->tanggal,
                         'minggu_ke'  => $row->minggu_ke,
                         'jumlah'     => $row->jumlah,
-                        'status'     => 'Terverifikasi', // tidak ada kolom status di cash_payments, kita tandai verified
+                        'status'     => 'Terverifikasi',
                     ];
                 });
         }
 
         /*
         |--------------------------------------------------------------------------
-        | 9. Transparansi kelas (untuk siswa)
+        | 9. Ringkasan kewajiban & tunggakan siswa (GLOBAL, bukan per-minggu)
+        |--------------------------------------------------------------------------
+        | Logika sederhana:
+        | - Hitung berapa banyak periode kas yang sudah berjalan (date_start <= hari ini)
+        | - Kewajiban total = jumlah_periode * nominalPerMinggu
+        | - Total setor siswa = sum(cash_payments.amount) untuk enrollment siswa di tahun aktif
+        | - Tunggakan total = max(0, kewajiban total - total setor)
+        |
+        | Ini view "makro" untuk panel siswa → cukup buat mereka paham:
+        | "Sampai minggu ini seharusnya kamu sudah setor sekian, yang sudah masuk sekian, sisa sekian."
+        */
+        $studentTotalSetorAll   = 0;
+        $studentKewajibanTotal  = 0;
+        $studentTunggakanTotal  = 0;
+
+        if ($u && $u->hasRole('siswa') && $classYearId && $nominalPerMinggu) {
+            // cari enrollment aktif siswa di tahun ini
+            $enrollmentIds = DB::table('student_enrollments')
+                ->where('class_year_id', $classYearId)
+                ->where('student_user_id', $u->id)
+                ->where('is_active', 1)
+                ->pluck('id');
+
+            if ($enrollmentIds->isNotEmpty()) {
+                // total setor semua waktu
+                $studentTotalSetorAll = DB::table('cash_payments')
+                    ->where('class_year_id', $classYearId)
+                    ->whereIn('enrollment_id', $enrollmentIds)
+                    ->sum('amount');
+
+                // berapa minggu (periode) yang sudah berjalan sampai hari ini
+                $jumlahPeriodeSampaiSekarang = DB::table('cash_periods')
+                    ->where('class_year_id', $classYearId)
+                    ->whereDate('date_start', '<=', Carbon::now()->toDateString())
+                    ->count();
+
+                $studentKewajibanTotal = $jumlahPeriodeSampaiSekarang * $nominalPerMinggu;
+                $studentTunggakanTotal = max(0, $studentKewajibanTotal - $studentTotalSetorAll);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 10. Transparansi kelas (untuk siswa)
         |--------------------------------------------------------------------------
         */
         $transparansiKelas = [
@@ -254,18 +265,71 @@ class DashboardController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | 10. Kirim ke Blade
+        | 11. Data untuk Chart.js (6 bulan terakhir)
+        |--------------------------------------------------------------------------
+        | Kita buat bar chart:
+        | - label: 6 bulan terakhir (mis. Jul 25, Agu 25, dst)
+        | - dataset 1: total kas masuk / bulan
+        | - dataset 2: total kas keluar / bulan
+        */
+        $chartLabels = [];
+        $chartMasuk  = [];
+        $chartKeluar = [];
+
+        if ($classYearId) {
+            $start = Carbon::now()->startOfMonth()->subMonths(5); // mundur 5 bulan + bulan berjalan
+
+            for ($i = 0; $i < 6; $i++) {
+                $m = (clone $start)->addMonths($i);
+                $startDate = $m->toDateString();
+                $endDate   = $m->copy()->endOfMonth()->toDateString();
+
+                $label = $m->translatedFormat('M y');
+                $chartLabels[] = $label;
+
+                $masuk = DB::table('cash_payments')
+                    ->where('class_year_id', $classYearId)
+                    ->whereBetween('date', [$startDate, $endDate])
+                    ->sum('amount');
+
+                $keluar = DB::table('cash_expenses')
+                    ->where('class_year_id', $classYearId)
+                    ->whereBetween('date', [$startDate, $endDate])
+                    ->sum('amount');
+
+                $chartMasuk[]  = (int) $masuk;
+                $chartKeluar[] = (int) $keluar;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 12. Kirim ke Blade
         |--------------------------------------------------------------------------
         */
         return view('dashboard.index', [
-            'u'                   => $u,
-            'saldoKas'            => $saldoKas,
-            'pendingPengeluaran'  => $pendingPengeluaran,
-            'siswaBelumBayar'     => $siswaBelumBayar,
-            'riwayatBayarSaya'    => $riwayatBayarSaya,
-            'transparansiKelas'   => $transparansiKelas,
-            'bulanIniMasuk'       => $bulanIniMasuk,
-            'bulanIniKeluar'      => $bulanIniKeluar,
+            'u'                     => $u,
+            'classYear'             => $classYear,
+            'period'                => $periodeAktif,
+            'nominal'               => $nominalPerMinggu,
+
+            'saldoKas'              => $saldoKas,
+            'pendingPengeluaran'    => $pendingPengeluaran,
+            'siswaBelumBayar'       => $siswaBelumBayar,
+            'riwayatBayarSaya'      => $riwayatBayarSaya,
+            'transparansiKelas'     => $transparansiKelas,
+            'bulanIniMasuk'         => $bulanIniMasuk,
+            'bulanIniKeluar'        => $bulanIniKeluar,
+
+            // ringkasan tunggakan siswa
+            'studentTotalSetorAll'  => $studentTotalSetorAll,
+            'studentKewajibanTotal' => $studentKewajibanTotal,
+            'studentTunggakanTotal' => $studentTunggakanTotal,
+
+            // data grafik
+            'chartLabels'           => $chartLabels,
+            'chartMasuk'            => $chartMasuk,
+            'chartKeluar'           => $chartKeluar,
         ]);
     }
 }

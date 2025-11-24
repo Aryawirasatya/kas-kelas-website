@@ -9,11 +9,6 @@
       <div class="d-flex align-items-center gap-3">
         <div class="status-dot {{ $year->status }}"></div>
         <div>
-          @if($year->school_name)
-            <div class="text-muted small mb-1">
-              {{ $year->school_name }}
-            </div>
-          @endif
           <div class="fw-semibold">
             {{ $year->class_label }} ({{ $year->level }})
           </div>
@@ -27,11 +22,7 @@
       </div>
       <div class="text-end">
         <span class="badge rounded-pill
-          {{ $year->status === 'active'
-             ? 'bg-success'
-             : ($year->status === 'draft'
-                ? 'bg-warning text-dark'
-                : 'bg-secondary') }}">
+          {{ $year->status === 'active' ? 'bg-success' : ($year->status === 'draft' ? 'bg-warning text-dark' : 'bg-secondary') }}">
           {{ ucfirst($year->status) }}
         </span>
         <div class="mt-1 small">
@@ -102,7 +93,7 @@
       <div class="row g-3">
         <div class="col-md-4">
           <div class="border rounded-3 p-3 h-100">
-            <div class="mini-label">Total Siswa di Tahun Ini</div>
+            <div class="mini-label">Total Siswa (di tahun ini)</div>
             <div class="fw-semibold fs-5">{{ $totalSiswa }}</div>
             <div class="small text-muted">Termasuk aktif & nonaktif.</div>
           </div>
@@ -121,7 +112,7 @@
             <div class="mini-label">Bendahara</div>
             @if($bendaharaList->isEmpty())
               <div class="text-muted small mt-1">
-                Tidak tercatat / tidak diset.
+                Tidak tercatat.
               </div>
             @else
               <ul class="mb-0 small ps-3 mt-1">
@@ -158,7 +149,7 @@
             <thead class="table-light">
               <tr>
                 <th style="width:90px;">Minggu</th>
-                <th style="width:240px;">Rentang Tanggal</th>
+                <th style="width:220px;">Rentang Tanggal</th>
                 <th class="text-end" style="width:160px;">Masuk</th>
                 <th class="text-end" style="width:160px;">Keluar</th>
                 <th class="text-end" style="width:160px;">Saldo (+)</th>
@@ -175,9 +166,9 @@
                 <tr>
                   <td>#{{ $p->week_no }}</td>
                   <td>
-                    {{ \Carbon\Carbon::parse($p->date_start)->translatedFormat('d M Y') }}
+                    {{ \Illuminate\Support\Carbon::parse($p->date_start)->translatedFormat('d M Y') }}
                     &ndash;
-                    {{ \Carbon\Carbon::parse($p->date_end)->translatedFormat('d M Y') }}
+                    {{ \Illuminate\Support\Carbon::parse($p->date_end)->translatedFormat('d M Y') }}
                   </td>
                   <td class="text-end">
                     Rp {{ number_format($in, 0, ',', '.') }}
@@ -204,15 +195,6 @@
       @endif
     </div>
   </div>
-
-  {{--
-    Kalau nanti mau pakai Chart.js (per minggu) untuk tahun arsip ini,
-    kamu sudah punya data:
-    - $chartLabels  (array of "Minggu 1", "Minggu 2", ...)
-    - $chartMasuk   (array total masuk)
-    - $chartKeluar  (array total keluar)
-    Tinggal tambahkan <canvas> + script di bawah sini.
-  --}}
 
 </div>
 

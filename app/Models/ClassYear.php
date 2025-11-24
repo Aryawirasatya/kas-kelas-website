@@ -7,24 +7,33 @@ use Illuminate\Database\Eloquent\Model;
 class ClassYear extends Model
 {
     protected $fillable = [
-        'class_label','level','academic_year',
-        'homeroom_name','homeroom_user_id','status'
+        'school_name',   
+        'class_label',
+        'level',
+        'academic_year',
+        'homeroom_name',
+        'homeroom_user_id',
+        'status',
     ];
+
+    // Contoh scope active (sepertinya sudah ada di project kamu)
+    public function scopeActive($query)
+    {
+        return $query->where('status', 'active');
+    }
 
     public function setting()
     {
-        return $this->hasOne(ClassSetting::class, 'class_year_id');
+        return $this->hasOne(ClassSetting::class);
     }
 
     public function enrollments()
     {
-        return $this->hasMany(StudentEnrollment::class, 'class_year_id');
+        return $this->hasMany(StudentEnrollment::class);
     }
 
     public function periods()
     {
-        return $this->hasMany(CashPeriod::class, 'class_year_id');
+        return $this->hasMany(CashPeriod::class);
     }
-
-    public function scopeActive($q){ return $q->where('status','active'); }
 }
