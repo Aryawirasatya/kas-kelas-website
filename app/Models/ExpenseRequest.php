@@ -2,51 +2,69 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ExpenseRequest extends Model
 {
-    use HasFactory;
+    use SoftDeletes;
+
+    protected $table = 'expense_requests';
 
     protected $fillable = [
         'class_year_id',
+        'request_date',
         'category_id',
+        'amount',
+        'description',
+        'status',
         'requested_by',
         'approved_by',
-        'amount',
-        'reason',
-        'status',
         'approved_at',
+        'reject_reason',
     ];
 
-    // 🔗 Relasi ke tahun ajaran
+    protected $casts = [
+        'request_date' => 'date',
+        'approved_at'  => 'datetime',
+    ];
+
+    // === Relasi ===
+
     public function classYear()
     {
         return $this->belongsTo(ClassYear::class);
     }
 
-    // 🔗 Relasi ke kategori (ATK, acara, dll)
     public function category()
     {
         return $this->belongsTo(Category::class);
     }
 
-    // 🔗 Relasi ke user yang membuat request
     public function requester()
     {
         return $this->belongsTo(User::class, 'requested_by');
     }
 
-    // 🔗 Relasi ke user yang menyetujui (guru)
     public function approver()
     {
         return $this->belongsTo(User::class, 'approved_by');
     }
 
-    // 🔗 Relasi ke cash expense (realisasi pengeluaran)
-    public function cashExpense()
+    public function attachments()
     {
-        return $this->hasOne(CashExpense::class, 'request_id');
+        return $this->morphMany(Attachment::class, 'attachable');
+    }
+
+    // === Scope bantu ===
+
+    public function scopeForClassYear($query, $classYearId)
+    {
+        return $query->where('class_year_id', $classYearId);
+    }
+
+    public function scopePending($query)
+    {
+        return $query->where('status', 'pending');
     }
 }

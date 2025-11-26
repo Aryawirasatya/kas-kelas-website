@@ -4,18 +4,18 @@
   // ===== Flags route aktif =====
   $isDashboard     = request()->routeIs('dashboard');
   $isYear          = request()->routeIs('year.*');
-  $isPeriod        = request()->routeIs('period.*');
+  $isPeriod        = request()->routeIs('period.index') || request()->routeIs('period.*');
 
-  // Guru
-  $isApproval      = request()->routeIs('approval.*');
+  // Guru – ACC pakai expense-requests.*
+  $isApproval      = request()->routeIs('expense-requests.*');
 
   // Bendahara
   $isKasInput      = request()->routeIs('cash.*');
-  $isKasUnpaid     = request()->routeIs('cash.unpaid*'); // flag (nanti bisa diarahkan ke halaman belum lunas)
+  $isKasUnpaid     = request()->routeIs('cash.unpaid*'); // nanti diarahkan ke halaman belum lunas
   $kasOpen         = $isKasInput || $isPeriod || $isKasUnpaid;
 
-  // Pengeluaran kas (bendahara)
-  $isSpendReq      = request()->routeIs('expense_requests.*');
+  // Pengeluaran kas (bendahara & guru)
+  $isSpendReq      = request()->routeIs('expense-requests.*');
   $spendOpen       = $isSpendReq;
 
   // Siswa
@@ -68,6 +68,7 @@
         </a>
       </li>
 
+      {{-- ACC Pengeluaran (Guru pakai halaman pengajuan yg sama) --}}
       @php $approvalOpen = $isApproval; @endphp
       <li class="nav-item">
         <a class="nav-link {{ $approvalOpen ? '' : 'collapsed' }}"
@@ -81,20 +82,28 @@
         </a>
         <div class="collapse {{ $approvalOpen ? 'show' : '' }}" id="approval-spend">
           <ul class="nav flex-column sub-menu">
+            {{-- Permintaan Pending --}}
             <li class="nav-item">
-              <a class="nav-link {{ request()->routeIs('approval.index') ? 'active' : '' }}"
-                 href="#">
+              <a class="nav-link
+                  {{ request()->routeIs('expense-requests.index') && request('status') === 'pending' ? 'active' : '' }}"
+                 href="{{ route('expense-requests.index', ['status' => 'pending']) }}">
                 Permintaan Pending
               </a>
             </li>
+
+            {{-- Riwayat ACC / Tolak --}}
             <li class="nav-item">
-              <a class="nav-link {{ request()->routeIs('approval.history') ? 'active' : '' }}"
-                 href="#">
+              <a class="nav-link
+                  {{ request()->routeIs('expense-requests.index') && in_array(request('status'), ['approved', 'rejected']) ? 'active' : '' }}"
+                 href="{{ route('expense-requests.index', ['status' => 'approved']) }}">
                 Riwayat ACC / Tolak
               </a>
             </li>
           </ul>
         </div>
+      </li>
+
+
       </li>
     @endif
 
@@ -137,7 +146,7 @@
         </div>
       </li>
 
-      {{-- Pengeluaran kas --}}
+      {{-- Pengeluaran kas (pengajuan bendahara) --}}
       <li class="nav-item">
         <a class="nav-link {{ $spendOpen ? '' : 'collapsed' }}"
            data-bs-toggle="collapse"
@@ -153,21 +162,22 @@
 
             {{-- Halaman ajukan pengeluaran --}}
             <li class="nav-item">
-              <a class="nav-link {{ request()->routeIs('expense_requests.create') ? 'active' : '' }}"
-                 href="{{ route('expense_requests.create') }}">
+              <a class="nav-link {{ request()->routeIs('expense-requests.create') ? 'active' : '' }}"
+                 href="{{ route('expense-requests.create') }}">
                 Ajukan Pengeluaran
               </a>
             </li>
 
             {{-- Halaman daftar/status pengajuan --}}
             <li class="nav-item">
-              <a class="nav-link {{ request()->routeIs('expense_requests.index') ? 'active' : '' }}"
-                 href="{{ route('expense_requests.index') }}">
+              <a class="nav-link {{ request()->routeIs('expense-requests.index') ? 'active' : '' }}"
+                 href="{{ route('expense-requests.index') }}">
                 Status Pengajuan
               </a>
             </li>
 
-            {{-- Realisasi pengeluaran (nanti kalau sudah ada route-nya)
+            {{-- Realisasi pengeluaran (kalau nanti sudah ada) --}}
+            {{--
             <li class="nav-item">
               <a class="nav-link {{ request()->routeIs('cash_expenses.index') ? 'active' : '' }}"
                  href="{{ route('cash_expenses.index') }}">
@@ -178,41 +188,25 @@
           </ul>
         </div>
       </li>
+    @endif
 
-      {{-- Kategori Pengeluaran --}}
+    {{-- =========================
+         SISWA
+       ========================= --}}
+ 
+
+    {{-- =========================
+         LAPORAN (Guru & Bendahara)
+       ========================= --}}
+    @if($u && ($u->hasRole('guru') || $u->hasRole('bendahara')))
+
+          {{-- (Opsional) Kategori Pengeluaran khusus Guru --}}
       <li class="nav-item">
         <a class="nav-link {{ request()->routeIs('categories.*') ? 'active' : '' }}"
            href="{{ route('categories.index') }}">
           <i class="mdi mdi-shape-outline menu-icon"></i>
           <span class="menu-title">Kategori Pengeluaran</span>
         </a>
-      </li>
-    @endif
-
-    {{-- =========================
-         SISWA
-       ========================= --}}
-    @if($u && $u->hasRole('siswa'))
-      <li class="nav-item">
-        <a class="nav-link {{ $isRiwayatSaya ? 'active' : '' }}"
-           href="#">
-          <i class="mdi mdi-book-check-outline menu-icon"></i>
-          <span class="menu-title">Riwayat Pembayaran Saya</span>
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {{ $isTransparan ? 'active' : '' }}"
-           href="#">
-          <i class="mdi mdi-eye-outline menu-icon"></i>
-          <span class="menu-title">Transparansi Kas Kelas</span>
-        </a>
-      </li>
-    @endif
-
-    {{-- =========================
-         LAPORAN (Guru & Bendahara)
-       ========================= --}}
-    @if($u && ($u->hasRole('guru') || $u->hasRole('bendahara')))
       <li class="nav-item nav-category">Laporan</li>
       <li class="nav-item">
         <a class="nav-link {{ $reportsOpen ? '' : 'collapsed' }}"
