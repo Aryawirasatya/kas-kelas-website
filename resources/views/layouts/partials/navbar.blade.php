@@ -22,16 +22,6 @@
 
   <div class="navbar-menu-wrapper d-flex align-items-top">
     <ul class="navbar-nav">
-      <li class="nav-item fw-semibold d-none d-lg-block ms-0">
-        @auth
-          <h4 class="welcome-text">
-            {{-- bisa diganti kalimat sapaan kalau mau --}}
-            <span class="text-black fw-bold">{{ $u->name }}</span>
-          </h4>
-          {{-- contoh sub-text, boleh diaktifkan kalau mau --}}
-          {{-- <h4 class="welcome-sub-text">Siap cek uang kas?</h4> --}}
-        @endauth
-      </li>
     </ul>
 
     <ul class="navbar-nav ms-auto">

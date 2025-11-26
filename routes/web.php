@@ -57,6 +57,11 @@ Route::middleware(['auth', 'role:guru'])->group(function () {
 
     // Halaman ringkasan 1 tahun ajaran (active / archived)
     Route::get('/tahun-ajaran/{year}/ringkasan',               [YearController::class, 'summary'])->name('year.summary');
+
+    /**
+     * Kategori Pengeluaran (Guru)
+     * Guru yang atur daftar kategori; bendahara pakai di pengajuan.
+     */
 });
 
 /**
@@ -78,16 +83,28 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/periode/{period}/open',  [PeriodController::class, 'open'])->name('period.open');
         Route::post('/periode/{period}/close', [PeriodController::class, 'close'])->name('period.close');
     });
+    
+});
+Route::middleware(['auth', 'role:guru|bendahara'])->group(function () {
+ Route::resource('categories', CategoryController::class);
 });
 
 /**
- * Kategori & Pengajuan Pengeluaran (Bendahara)
+ * Pengajuan Pengeluaran (Guru & Bendahara)
+ * - Bendahara: buat & lihat pengajuan miliknya
+ * - Guru     : lihat semua pengajuan (untuk ACC di task berikutnya)
  */
-Route::middleware(['auth', 'role:bendahara'])->group(function () {
-    Route::resource('categories', CategoryController::class);
-    Route::resource('expense_requests', ExpenseRequestController::class);
+Route::middleware(['auth', 'role:guru|bendahara'])->group(function () {
+    Route::resource('expense-requests', ExpenseRequestController::class)
+        ->only(['index', 'create', 'store', 'show', 'destroy']);
 });
+Route::middleware(['auth', 'role:guru'])->group(function () {
+    Route::post('/expense-requests/{expenseRequest}/approve', [CashExpenseController::class, 'approveFromRequest'])
+        ->name('expense-requests.approve');
 
+    Route::post('/expense-requests/{expenseRequest}/reject', [ExpenseRequestController::class, 'reject'])
+        ->name('expense-requests.reject');
+});
 /**
  * Kas (Bendahara)
  */
