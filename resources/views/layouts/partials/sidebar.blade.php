@@ -1,4 +1,5 @@
 @php
+  /** @var \App\Models\User|null $u */
   $u = auth()->user();
 
   // ===== Flags route aktif =====
@@ -22,9 +23,10 @@
   $isRiwayatSaya   = request()->routeIs('student.payments.*');
   $isTransparan    = request()->routeIs('transparansi.*');
 
-  // Laporan
-  $isReportIndex   = request()->routeIs('report.index');
-  $isReportExport  = request()->routeIs('report.export.*');
+  // Laporan (guru, bendahara, siswa)
+  $isReportIndex   = request()->routeIs('reports.index');
+  $isReportExport  = request()->routeIs('reports.export.*')
+                    || request()->routeIs('reports.export.personal.*');
   $reportsOpen     = $isReportIndex || $isReportExport;
 
   // Akun
@@ -102,9 +104,6 @@
           </ul>
         </div>
       </li>
-
-
-      </li>
     @endif
 
     {{-- =========================
@@ -134,12 +133,6 @@
               <a class="nav-link {{ $isPeriod ? 'active' : '' }}"
                  href="{{ route('period.index') }}">
                 Periode / Minggu Aktif
-              </a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link {{ $isKasUnpaid ? 'active' : '' }}"
-                 href="#">
-                Belum Lunas &amp; Alasan
               </a>
             </li>
           </ul>
@@ -175,16 +168,6 @@
                 Status Pengajuan
               </a>
             </li>
-
-            {{-- Realisasi pengeluaran (kalau nanti sudah ada) --}}
-            {{--
-            <li class="nav-item">
-              <a class="nav-link {{ request()->routeIs('cash_expenses.index') ? 'active' : '' }}"
-                 href="{{ route('cash_expenses.index') }}">
-                Realisasi Pengeluaran
-              </a>
-            </li>
-            --}}
           </ul>
         </div>
       </li>
@@ -192,46 +175,49 @@
 
     {{-- =========================
          SISWA
+         (menu khusus siswa kalau nanti ada, misal riwayat sendiri)
        ========================= --}}
- 
+    {{-- contoh: nanti bisa ditambah menu lain untuk siswa di sini --}}
 
     {{-- =========================
-         LAPORAN (Guru & Bendahara)
+         KATEGORI (Guru & Bendahara)
        ========================= --}}
     @if($u && ($u->hasRole('guru') || $u->hasRole('bendahara')))
-
-          {{-- (Opsional) Kategori Pengeluaran khusus Guru --}}
       <li class="nav-item">
         <a class="nav-link {{ request()->routeIs('categories.*') ? 'active' : '' }}"
            href="{{ route('categories.index') }}">
           <i class="mdi mdi-shape-outline menu-icon"></i>
           <span class="menu-title">Kategori Pengeluaran</span>
         </a>
+      </li>
+    @endif
+
+    {{-- =========================
+         LAPORAN (Guru, Bendahara, Siswa)
+       ========================= --}}
+    @if($u && ($u->hasRole('guru') || $u->hasRole('bendahara') || $u->hasRole('siswa')))
       <li class="nav-item nav-category">Laporan</li>
+
       <li class="nav-item">
-        <a class="nav-link {{ $reportsOpen ? '' : 'collapsed' }}"
-           data-bs-toggle="collapse"
-           href="#reports"
-           aria-expanded="{{ $reportsOpen ? 'true' : 'false' }}"
-           aria-controls="reports">
+        <a class="nav-link {{ $isReportIndex ? 'active' : '' }}"
+           href="{{ route('reports.index') }}"
+           aria-current="{{ $isReportIndex ? 'page' : 'false' }}">
           <i class="mdi mdi-file-chart-outline menu-icon"></i>
           <span class="menu-title">Laporan Keuangan</span>
-          <i class="menu-arrow"></i>
         </a>
-        <div class="collapse {{ $reportsOpen ? 'show' : '' }}" id="reports">
-          <ul class="nav flex-column sub-menu">
-            <li class="nav-item">
-              <a class="nav-link {{ $isReportIndex ? 'active' : '' }}" href="#">
-                Ringkasan Kas
-              </a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link {{ $isReportExport ? 'active' : '' }}" href="#">
-                Export PDF / Excel
-              </a>
-            </li>
-          </ul>
-        </div>
+      </li>
+    @endif
+
+    {{-- =========================
+         RIWAYAT AKTIVITAS (hanya Guru & Bendahara)
+       ========================= --}}
+    @if($u && ($u->hasRole('guru') || $u->hasRole('bendahara')))
+      <li class="nav-item">
+        <a class="nav-link {{ request()->routeIs('activity-logs.*') ? 'active' : '' }}"
+           href="{{ route('activity-logs.index') }}">
+           <i class="mdi mdi-history menu-icon"></i>
+            <span class="menu-title">Riwayat Aktivitas</span>
+        </a>
       </li>
     @endif
 

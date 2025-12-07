@@ -11,17 +11,22 @@ class UnpaidReason extends Model
         'period_id',
         'enrollment_id',
         'reason',
-        'set_by',
+        'set_by',      // ⬅️ TAMBAHKAN INI
     ];
 
-    public function enrollment()
+    public function year()
     {
-        return $this->belongsTo(StudentEnrollment::class, 'enrollment_id');
+        return $this->belongsTo(ClassYear::class, 'class_year_id');
     }
 
     public function period()
     {
         return $this->belongsTo(CashPeriod::class, 'period_id');
+    }
+
+    public function enrollment()
+    {
+        return $this->belongsTo(StudentEnrollment::class, 'enrollment_id');
     }
 
     public function setter()

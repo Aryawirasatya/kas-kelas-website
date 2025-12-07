@@ -10,6 +10,8 @@ use App\Models\ClassYear;
 use App\Models\ClassSetting;
 use App\Models\StudentEnrollment;
 use App\Models\User;
+use App\Models\ActivityLog;
+
 use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\StudentsImport;
 use App\Http\Requests\StoreClassYearRequest;
@@ -19,76 +21,234 @@ class YearController extends Controller
 {
     // ====== INDEX: daftar tahun + tahun aktif ======
     public function index()
-{
-    $u = auth()->user();
+    {
+        $u = auth()->user();
 
-    // Hanya tahun milik guru ini
-    $years = ClassYear::where('homeroom_user_id', $u->id)
-        ->latest('id')
-        ->get();
+        // Hanya tahun milik guru ini
+        $years = ClassYear::where('homeroom_user_id', $u->id)
+            ->latest('id')
+            ->get();
 
-    // Tahun aktif guru ini (kalau ada)
-    $activeYear = ClassYear::with('setting')
-        ->where('homeroom_user_id', $u->id)
-        ->active()
-        ->latest('id')
-        ->first();
+        // Tahun aktif guru ini (kalau ada)
+        $activeYear = ClassYear::with('setting')
+            ->where('homeroom_user_id', $u->id)
+            ->active()
+            ->latest('id')
+            ->first();
 
-    return view('year.index', compact('years', 'activeYear'));
-}
+        // LOG: guru buka halaman daftar tahun ajaran
+        try {
+            ActivityLog::create([
+                'class_year_id' => $activeYear?->id,
+                'actor_id'      => $u?->id,
+                'action'        => 'year.index.view',
+                'entity_type'   => 'class_year',
+                'entity_id'     => $activeYear?->id,
+                'from_json'     => null,
+                'to_json'       => [
+                    'total_years' => $years->count(),
+                    'has_active'  => (bool) $activeYear,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            // jangan ganggu flow
+        }
 
-
-      public function storeDraft(StoreClassYearRequest $request)
-{
-    $u    = $request->user();
-    $data = $request->validated();
-
-    // 1. Pastikan guru ini tidak punya tahun ajaran DRAFT/ACTIVE lain
-    $hasNonArchived = ClassYear::where('homeroom_user_id', $u->id)
-        ->whereIn('status', ['draft', 'active'])
-        ->exists();
-
-    if ($hasNonArchived) {
-        return back()
-            ->withErrors([
-                'academic_year' => 'Kamu masih punya tahun ajaran berstatus DRAFT/ACTIVE. '
-                    . 'Tutup atau arsipkan dulu sebelum membuat tahun ajaran baru.',
-            ])
-            ->withInput();
+        return view('year.index', compact('years', 'activeYear'));
     }
 
-    // 2. Buat draft baru + setting default
-    $year = DB::transaction(function () use ($data, $u) {
-        $year = ClassYear::create([
-            'school_name'      => $data['school_name'] ?? null,
-            'class_label'      => $data['class_label'],
-            'level'            => $data['level'],
-            'academic_year'    => $data['academic_year'],
-            'homeroom_name'    => $u->name,
-            'homeroom_user_id' => $u->id,
-            'status'           => 'draft',
-        ]);
+    public function storeDraft(StoreClassYearRequest $request)
+    {
+        $u    = $request->user();
+        $data = $request->validated();
 
-        $year->setting()->create([
-            'kas_nominal'  => 0,
-            'periode'      => 'mingguan',
-        ]);
+        // 1. Pastikan guru ini tidak punya tahun ajaran DRAFT/ACTIVE lain
+        $hasNonArchived = ClassYear::where('homeroom_user_id', $u->id)
+            ->whereIn('status', ['draft', 'active'])
+            ->exists();
 
-        return $year;
-    });
+        if ($hasNonArchived) {
+            return back()
+                ->withErrors([
+                    'academic_year' => 'Kamu masih punya tahun ajaran berstatus DRAFT/ACTIVE. '
+                        . 'Tutup atau arsipkan dulu sebelum membuat tahun ajaran baru.',
+                ])
+                ->withInput();
+        }
 
-    return redirect()
-        ->route('year.setting', $year)
-        ->with('success', 'Draft tahun ajaran dibuat. Lanjut atur nominal kas.');
-}
+        // 2. Buat draft baru + setting default
+        $year = DB::transaction(function () use ($data, $u) {
+            $year = ClassYear::create([
+                'school_name'      => $data['school_name'] ?? null,
+                'class_label'      => $data['class_label'],
+                'level'            => $data['level'],
+                'academic_year'    => $data['academic_year'],
+                'homeroom_name'    => $u->name,
+                'homeroom_user_id' => $u->id,
+                'status'           => 'draft',
+            ]);
 
+            $setting = $year->setting()->create([
+                'kas_nominal'  => 0,
+                'periode'      => 'mingguan',
+            ]);
 
-    // ====== STEP 2: edit nominal ======
+            // LOG: buat draft tahun ajaran baru
+            try {
+                ActivityLog::create([
+                    'class_year_id' => $year->id,
+                    'actor_id'      => $u->id,
+                    'action'        => 'year.create_draft',
+                    'entity_type'   => 'class_year',
+                    'entity_id'     => $year->id,
+                    'from_json'     => null,
+                    'to_json'       => [
+                        'year'    => $year->only(['id', 'school_name', 'class_label', 'level', 'academic_year', 'status']),
+                        'setting' => $setting->only(['id', 'kas_nominal', 'periode']),
+                    ],
+                ]);
+            } catch (\Throwable $e) {}
+
+            return $year;
+        });
+
+        return redirect()
+            ->route('year.setting', $year)
+            ->with('success', 'Draft tahun ajaran dibuat. Lanjut atur nominal kas.');
+    }
+
+    // ====== STEP 2: edit nominal + ringkasan kas & periode ======
     public function editSetting(ClassYear $year)
     {
         abort_if(!in_array($year->status, ['draft', 'active']), 403);
 
-        return view('year.setting', compact('year'));
+        $yearId = $year->id;
+
+        /*
+        |--------------------------------------------------------------
+        | 1. Rekap total MASUK & KELUAR (untuk mini card di atas)
+        |--------------------------------------------------------------
+        */
+        $totalMasuk = (int) DB::table('cash_payments')
+            ->where('class_year_id', $yearId)
+            ->sum('amount');
+
+        $totalKeluar = (int) DB::table('cash_expenses')
+            ->where('class_year_id', $yearId)
+            ->sum('amount');
+
+        $saldoKas = $totalMasuk - $totalKeluar;
+
+        /*
+        |--------------------------------------------------------------
+        | 2. Ambil semua periode (minggu) tahun ini
+        |--------------------------------------------------------------
+        */
+        $periods = DB::table('cash_periods as p')
+            ->where('p.class_year_id', $yearId)
+            ->orderBy('p.date_start')
+            ->get([
+                'p.id',
+                'p.week_no',
+                'p.date_start',
+                'p.date_end',
+                'p.status',
+            ]);
+
+        if ($periods->isEmpty()) {
+            $rekapPeriode = collect();
+        } else {
+            /*
+            |----------------------------------------------------------
+            | 3. Rekap kas MASUK per periode (pakai period_id)
+            |----------------------------------------------------------
+            */
+            $masukByPeriod = DB::table('cash_payments')
+                ->select('period_id', DB::raw('SUM(amount) as total'))
+                ->where('class_year_id', $yearId)
+                ->groupBy('period_id')
+                ->pluck('total', 'period_id');  // [period_id => total]
+
+            /*
+            |----------------------------------------------------------
+            | 4. Rekap kas KELUAR per periode (pakai range tanggal)
+            |----------------------------------------------------------
+            */
+            $rekapPeriode = $periods->map(function ($p) use ($masukByPeriod, $yearId) {
+                $totalMasuk = (int) ($masukByPeriod[$p->id] ?? 0);
+
+                $totalKeluar = (int) DB::table('cash_expenses')
+                    ->where('class_year_id', $yearId)
+                    ->whereBetween('date', [$p->date_start, $p->date_end])
+                    ->sum('amount');
+
+                return (object) [
+                    'id'           => $p->id,
+                    'week_no'      => $p->week_no,
+                    'date_start'   => $p->date_start,
+                    'date_end'     => $p->date_end,
+                    'status'       => $p->status,
+                    'total_masuk'  => $totalMasuk,
+                    'total_keluar' => $totalKeluar,
+                ];
+            });
+        }
+
+        /*
+        |--------------------------------------------------------------
+        | 5. Info siswa & bendahara
+        |--------------------------------------------------------------
+        */
+        $totalSiswa    = $year->enrollments()->count();
+        $siswaAktif    = $year->enrollments()->where('is_active', true)->count();
+        $siswaNonaktif = $totalSiswa - $siswaAktif;
+
+        $bendaharaList = $year->enrollments()
+            ->where('is_treasurer', true)
+            ->with('user:id,name')
+            ->get()
+            ->pluck('user.name')
+            ->filter()
+            ->values();
+
+        // LOG: guru buka halaman setting kas
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'year.setting.view',
+                'entity_type'   => 'class_year',
+                'entity_id'     => $year->id,
+                'from_json'     => null,
+                'to_json'       => [
+                    'status'         => $year->status,
+                    'total_masuk'    => $totalMasuk,
+                    'total_keluar'   => $totalKeluar,
+                    'saldo_kas'      => $saldoKas,
+                    'total_siswa'    => $totalSiswa,
+                    'siswa_aktif'    => $siswaAktif,
+                    'siswa_nonaktif' => $siswaNonaktif,
+                    'bendahara'      => $bendaharaList->all(),
+                ],
+            ]);
+        } catch (\Throwable $e) {}
+
+        /*
+        |--------------------------------------------------------------
+        | 6. Kirim semua ke view year.setting
+        |--------------------------------------------------------------
+        */
+        return view('year.setting', [
+            'year'          => $year,
+            'totalMasuk'    => $totalMasuk,
+            'totalKeluar'   => $totalKeluar,
+            'saldoKas'      => $saldoKas,
+            'rekapPeriode'  => $rekapPeriode,
+            'totalSiswa'    => $totalSiswa,
+            'siswaAktif'    => $siswaAktif,
+            'siswaNonaktif' => $siswaNonaktif,
+            'bendaharaList' => $bendaharaList,
+        ]);
     }
 
     public function updateSetting(UpdateClassSettingRequest $request, ClassYear $year)
@@ -97,9 +257,31 @@ class YearController extends Controller
 
         $data = $request->validated();
 
+        $setting       = $year->setting;
+        $beforeSetting = $setting
+            ? $setting->only(['id', 'kas_nominal', 'periode'])
+            : null;
+
         $year->setting()->update([
-            'kas_nominal'  => $data['kas_nominal'],
+            'kas_nominal' => $data['kas_nominal'],
         ]);
+
+        $setting->refresh();
+
+        $afterSetting = $setting->only(['id', 'kas_nominal', 'periode']);
+
+        // LOG: update nominal kas
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => $request->user()?->id,
+                'action'        => 'year.setting.update',
+                'entity_type'   => 'class_setting',
+                'entity_id'     => $setting->id,
+                'from_json'     => $beforeSetting,
+                'to_json'       => $afterSetting,
+            ]);
+        } catch (\Throwable $e) {}
 
         $next = ($year->status === 'draft')
             ? route('year.students', $year)
@@ -114,6 +296,7 @@ class YearController extends Controller
         abort_if(!in_array($year->status, ['draft', 'active']), 403);
 
         $search = request('q');
+        $only   = request('only');
 
         $enrolls = StudentEnrollment::with('user')
             ->where('class_year_id', $year->id)
@@ -127,9 +310,9 @@ class YearController extends Controller
                     })->orWhere('nis', 'like', "%{$search}%");
                 });
             })
-            ->when(request('only') === 'active', fn ($q) => $q->where('is_active', true))
-            ->when(request('only') === 'inactive', fn ($q) => $q->where('is_active', false))
-            ->when(request('only') === 'treasurer', fn ($q) => $q->where('is_treasurer', true))
+            ->when($only === 'active', fn ($q) => $q->where('is_active', true))
+            ->when($only === 'inactive', fn ($q) => $q->where('is_active', false))
+            ->when($only === 'treasurer', fn ($q) => $q->where('is_treasurer', true))
             ->orderBy('id')
             ->paginate(10);
 
@@ -137,6 +320,24 @@ class YearController extends Controller
             ->where('class_year_id', $year->id)
             ->orderBy('id')
             ->get();
+
+        // LOG: buka halaman daftar siswa
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'students.list.view',
+                'entity_type'   => 'class_year',
+                'entity_id'     => $year->id,
+                'from_json'     => null,
+                'to_json'       => [
+                    'search' => $search,
+                    'only'   => $only,
+                    'page'   => $enrolls->currentPage(),
+                    'total'  => $enrolls->total(),
+                ],
+            ]);
+        } catch (\Throwable $e) {}
 
         return view('year.students', compact('year', 'enrolls', 'pickerEnrolls'));
     }
@@ -168,13 +369,33 @@ class YearController extends Controller
             // default tetap siswa
             $user->assignRole('siswa');
 
-            StudentEnrollment::create([
+            $enrollment = StudentEnrollment::create([
                 'class_year_id'   => $year->id,
                 'student_user_id' => $user->id,
                 'nis'             => $data['nis'] ?? null,
                 'is_active'       => true,
                 'is_treasurer'    => false,
             ]);
+
+            // LOG: tambah siswa manual
+            try {
+                ActivityLog::create([
+                    'class_year_id' => $year->id,
+                    'actor_id'      => auth()->id(),
+                    'action'        => 'student.create_manual',
+                    'entity_type'   => 'student_enrollment',
+                    'entity_id'     => $enrollment->id,
+                    'from_json'     => null,
+                    'to_json'       => [
+                        'user_id' => $user->id,
+                        'name'    => $user->name,
+                        'email'   => $user->email,
+                        'nis'     => $enrollment->nis,
+                        'gender'  => $user->gender,
+                        'via'     => 'manual',
+                    ],
+                ]);
+            } catch (\Throwable $e) {}
         });
 
         return back()->with('success', 'Siswa baru berhasil ditambahkan dan tersimpan di tabel users & enrollments.');
@@ -196,7 +417,26 @@ class YearController extends Controller
         $import = new StudentsImport($year);
         Excel::import($import, $file);
 
-        $fails = $import->getFailures();
+        $fails      = $import->getFailures();
+        $failCount  = is_array($fails) ? count($fails) : (method_exists($fails, 'count') ? $fails->count() : 0);
+
+        // LOG: import siswa dari file
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'students.import',
+                'entity_type'   => 'class_year',
+                'entity_id'     => $year->id,
+                'from_json'     => null,
+                'to_json'       => [
+                    'filename'   => $file->getClientOriginalName(),
+                    'size'       => $file->getSize(),
+                    'fail_count' => $failCount,
+                ],
+            ]);
+        } catch (\Throwable $e) {}
+
         if (!empty($fails)) {
             $summary = collect($fails)->map(function ($f) {
                 $row    = method_exists($f, 'row') ? $f->row() : '-';
@@ -251,12 +491,10 @@ class YearController extends Controller
                 $en->save();
 
                 if ($en->user) {
-                    // Jika tadinya bendahara tapi sekarang tidak terpilih lagi → cabut role bendahara
                     if ($en->user->hasRole('bendahara')) {
                         $en->user->removeRole('bendahara');
                     }
 
-                    // Pastikan tetap punya role siswa
                     if (!$en->user->hasRole('siswa')) {
                         $en->user->assignRole('siswa');
                     }
@@ -273,55 +511,137 @@ class YearController extends Controller
                 $en->save();
 
                 if ($en->user) {
-                    // Pastikan dia siswa
                     if (!$en->user->hasRole('siswa')) {
                         $en->user->assignRole('siswa');
                     }
-                    // Tambahkan role bendahara
                     if (!$en->user->hasRole('bendahara')) {
                         $en->user->assignRole('bendahara');
                     }
                 }
             }
+
+            // LOG: set bendahara
+            try {
+                ActivityLog::create([
+                    'class_year_id' => $year->id,
+                    'actor_id'      => auth()->id(),
+                    'action'        => 'treasurer.assign',
+                    'entity_type'   => 'class_year',
+                    'entity_id'     => $year->id,
+                    'from_json'     => null,
+                    'to_json'       => [
+                        'treasurer_enrollment_ids' => $enrollIds,
+                    ],
+                ]);
+            } catch (\Throwable $e) {}
         });
 
         return back()->with('success', 'Bendahara disimpan dan role pengguna sudah disesuaikan.');
     }
 
     // ====== AKTIVASI / TUTUP TAHUN ======
-     public function activate(ClassYear $year)
-{
-    abort_if($year->status !== 'draft', 403);
+    public function activate(ClassYear $year)
+    {
+        abort_if($year->status !== 'draft', 403);
 
-    $kasOk        = ($year->setting?->kas_nominal ?? 0) > 0;
-    $hasStudents  = $year->enrollments()->active()->exists();
-    $treasurerCnt = $year->enrollments()->where('is_treasurer', true)->count();
+        $kasOk        = ($year->setting?->kas_nominal ?? 0) > 0;
+        $hasStudents  = $year->enrollments()->active()->exists();
+        $treasurerCnt = $year->enrollments()->where('is_treasurer', true)->count();
 
-    if (!$kasOk || !$hasStudents || $treasurerCnt < 1 || $treasurerCnt > 2) {
-        return back()
-            ->withErrors('Lengkapi: nominal kas, siswa aktif, dan bendahara 1–2 orang.')
-            ->withInput();
+        if (!$kasOk || !$hasStudents || $treasurerCnt < 1 || $treasurerCnt > 2) {
+            return back()
+                ->withErrors('Lengkapi: nominal kas, siswa aktif, dan bendahara 1–2 orang.')
+                ->withInput();
+        }
+
+        $user = auth()->user();
+
+        // Snapshot sebelum: tahun yg akan diaktifkan + tahun lain yg aktif (wali ini)
+        $before = [
+            'year'             => $year->only(['id', 'status']),
+            'other_active_ids' => ClassYear::active()
+                ->where('homeroom_user_id', $year->homeroom_user_id)
+                ->pluck('id')
+                ->values()
+                ->all(),
+        ];
+
+        DB::transaction(function () use ($year) {
+            ClassYear::active()
+                ->where('homeroom_user_id', $year->homeroom_user_id)
+                ->update(['status' => 'archived']);
+
+            $year->update(['status' => 'active']);
+        });
+
+        $year->refresh();
+
+        $after = [
+            'year'             => $year->only(['id', 'status']),
+            'other_active_ids' => ClassYear::active()
+                ->where('homeroom_user_id', $year->homeroom_user_id)
+                ->pluck('id')
+                ->values()
+                ->all(),
+        ];
+
+        // LOG: tahun ajaran diaktifkan
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => $user?->id,
+                'action'        => 'year.activate',
+                'entity_type'   => 'class_year',
+                'entity_id'     => $year->id,
+                'from_json'     => $before,
+                'to_json'       => $after,
+            ]);
+        } catch (\Throwable $e) {}
+
+        return redirect()->route('year.index')->with('success', 'Tahun ajaran diaktifkan.');
     }
-
-    DB::transaction(function () use ($year) {
-        // Arsipkan tahun aktif lain milik wali ini saja
-        ClassYear::active()
-            ->where('homeroom_user_id', $year->homeroom_user_id)
-            ->update(['status' => 'archived']);
-
-        $year->update(['status' => 'active']);
-    });
-
-    return redirect()->route('year.index')->with('success', 'Tahun ajaran diaktifkan.');
-}
-
 
     public function close(ClassYear $year)
     {
+        $user = auth()->user();
+
+        $before = [
+            'year'    => $year->only(['id', 'status']),
+            'periods' => $year->periods()
+                ->get(['id', 'status'])
+                ->map(fn ($p) => $p->only(['id', 'status']))
+                ->values()
+                ->all(),
+        ];
+
         DB::transaction(function () use ($year) {
             $year->update(['status' => 'archived']);
             $year->periods()->update(['status' => 'closed']);
         });
+
+        $year->refresh();
+
+        $after = [
+            'year'    => $year->only(['id', 'status']),
+            'periods' => $year->periods()
+                ->get(['id', 'status'])
+                ->map(fn ($p) => $p->only(['id', 'status']))
+                ->values()
+                ->all(),
+        ];
+
+        // LOG: tahun ajaran ditutup
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => $user?->id,
+                'action'        => 'year.close',
+                'entity_type'   => 'class_year',
+                'entity_id'     => $year->id,
+                'from_json'     => $before,
+                'to_json'       => $after,
+            ]);
+        } catch (\Throwable $e) {}
 
         return back()->with('success', 'Tahun ajaran ditutup.');
     }
@@ -367,6 +687,23 @@ class YearController extends Controller
                 return back()->withErrors('Aksi tidak dikenali.');
         }
 
+        // LOG: bulk operasi siswa
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'students.bulk_' . $data['action'],
+                'entity_type'   => 'class_year',
+                'entity_id'     => $year->id,
+                'from_json'     => null,
+                'to_json'       => [
+                    'affected_ids' => $ids,
+                    'count'        => count($ids),
+                    'action'       => $data['action'],
+                ],
+            ]);
+        } catch (\Throwable $e) {}
+
         return back()->with('success', $msg);
     }
 
@@ -383,6 +720,14 @@ class YearController extends Controller
             'gender' => ['nullable', 'in:L,P'],
         ]);
 
+        // Snapshot sebelum edit
+        $before = [
+            'name'   => $enrollment->user->name,
+            'email'  => $enrollment->user->email,
+            'gender' => $enrollment->user->gender,
+            'nis'    => $enrollment->nis,
+        ];
+
         DB::transaction(function () use ($data, $enrollment) {
             $user = $enrollment->user;
             $user->update([
@@ -396,6 +741,27 @@ class YearController extends Controller
             ]);
         });
 
+        // Snapshot sesudah edit
+        $after = [
+            'name'   => $data['name'],
+            'email'  => $data['email'],
+            'gender' => $data['gender'] ?? null,
+            'nis'    => $data['nis'] ?? null,
+        ];
+
+        // LOG: update data siswa
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'student.update',
+                'entity_type'   => 'student_enrollment',
+                'entity_id'     => $enrollment->id,
+                'from_json'     => $before,
+                'to_json'       => $after,
+            ]);
+        } catch (\Throwable $e) {}
+
         return back()->with('success', 'Data siswa diperbarui.');
     }
 
@@ -405,7 +771,9 @@ class YearController extends Controller
         abort_if(!in_array($year->status, ['draft', 'active']), 403);
         abort_if($enrollment->class_year_id !== $year->id, 404);
 
-        $new = !$enrollment->is_active;
+        $oldActive     = (bool) $enrollment->is_active;
+        $oldTreasurer  = (bool) $enrollment->is_treasurer;
+        $new           = !$oldActive;
 
         $payload = ['is_active' => $new];
         if ($new === false) {
@@ -414,152 +782,187 @@ class YearController extends Controller
 
         $enrollment->update($payload);
 
+        // LOG: toggle aktif/nonaktif siswa
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'student.toggle_active',
+                'entity_type'   => 'student_enrollment',
+                'entity_id'     => $enrollment->id,
+                'from_json'     => [
+                    'is_active'    => $oldActive,
+                    'is_treasurer' => $oldTreasurer,
+                ],
+                'to_json'       => [
+                    'is_active'    => $new,
+                    'is_treasurer' => (bool) $enrollment->is_treasurer,
+                ],
+            ]);
+        } catch (\Throwable $e) {}
+
         return back()->with('success', $new ? 'Siswa diaktifkan.' : 'Siswa dinonaktifkan.');
     }
+
     public function summary(ClassYear $year)
-{
-    // Opsional: batasi hanya wali pemilik tahun ini yang boleh lihat
-    // abort_if($year->homeroom_user_id !== auth()->id(), 403);
+    {
+        $yearId = $year->id;
 
-    $yearId = $year->id;
-
-    /*
-    |--------------------------------------------------------------
-    | 1. Rekap total MASUK & KELUAR 1 tahun ini (header ringkasan)
-    |--------------------------------------------------------------
-    */
-    $totalMasuk = (int) DB::table('cash_payments')
-        ->where('class_year_id', $yearId)
-        ->sum('amount');
-
-    $totalKeluar = (int) DB::table('cash_expenses')
-        ->where('class_year_id', $yearId)
-        ->sum('amount');
-
-    $saldoAkhir = $totalMasuk - $totalKeluar;
-
-    /*
-    |--------------------------------------------------------------
-    | 2. Ambil semua periode (minggu) tahun ini
-    |--------------------------------------------------------------
-    */
-    $periods = DB::table('cash_periods as p')
-        ->where('p.class_year_id', $yearId)
-        ->orderBy('p.date_start')
-        ->get([
-            'p.id',
-            'p.week_no',
-            'p.date_start',
-            'p.date_end',
-            'p.status',
-        ]);
-
-    if ($periods->isEmpty()) {
-        $rekapPeriode  = collect();
-        $chartLabels   = [];
-        $chartMasuk    = [];
-        $chartKeluar   = [];
-    } else {
         /*
-        |----------------------------------------------------------
-        | 3. Rekap kas MASUK per periode (pakai period_id)
-        |----------------------------------------------------------
+        |--------------------------------------------------------------
+        | 1. Rekap total MASUK & KELUAR 1 tahun ini (header ringkasan)
+        |--------------------------------------------------------------
         */
-        $masukByPeriod = DB::table('cash_payments')
-            ->select('period_id', DB::raw('SUM(amount) as total'))
+        $totalMasuk = (int) DB::table('cash_payments')
             ->where('class_year_id', $yearId)
-            ->groupBy('period_id')
-            ->pluck('total', 'period_id');  // [period_id => total]
+            ->sum('amount');
+
+        $totalKeluar = (int) DB::table('cash_expenses')
+            ->where('class_year_id', $yearId)
+            ->sum('amount');
+
+        $saldoAkhir = $totalMasuk - $totalKeluar;
 
         /*
-        |----------------------------------------------------------
-        | 4. Rekap kas KELUAR per periode pakai range tanggal
-        |----------------------------------------------------------
-        | Karena cash_expenses tidak punya period_id, kita pakai
-        | date_start & date_end setiap periode.
+        |--------------------------------------------------------------
+        | 2. Ambil semua periode (minggu) tahun ini
+        |--------------------------------------------------------------
         */
-        $rekapPeriode = $periods->map(function ($p) use ($masukByPeriod, $yearId) {
-            $totalMasuk = (int) ($masukByPeriod[$p->id] ?? 0);
+        $periods = DB::table('cash_periods as p')
+            ->where('p.class_year_id', $yearId)
+            ->orderBy('p.date_start')
+            ->get([
+                'p.id',
+                'p.week_no',
+                'p.date_start',
+                'p.date_end',
+                'p.status',
+            ]);
 
-            $totalKeluar = (int) DB::table('cash_expenses')
+        if ($periods->isEmpty()) {
+            $rekapPeriode  = collect();
+            $chartLabels   = [];
+            $chartMasuk    = [];
+            $chartKeluar   = [];
+        } else {
+            /*
+            |----------------------------------------------------------
+            | 3. Rekap kas MASUK per periode (pakai period_id)
+            |----------------------------------------------------------
+            */
+            $masukByPeriod = DB::table('cash_payments')
+                ->select('period_id', DB::raw('SUM(amount) as total'))
                 ->where('class_year_id', $yearId)
-                ->whereBetween('date', [$p->date_start, $p->date_end])
-                ->sum('amount');
+                ->groupBy('period_id')
+                ->pluck('total', 'period_id');  // [period_id => total]
 
-            return (object) [
-                'id'           => $p->id,
-                'week_no'      => $p->week_no,
-                'date_start'   => $p->date_start,
-                'date_end'     => $p->date_end,
-                'status'       => $p->status,
-                'total_masuk'  => $totalMasuk,
-                'total_keluar' => $totalKeluar,
-            ];
-        });
+            /*
+            |----------------------------------------------------------
+            | 4. Rekap kas KELUAR per periode pakai range tanggal
+            |----------------------------------------------------------
+            */
+            $rekapPeriode = $periods->map(function ($p) use ($masukByPeriod, $yearId) {
+                $totalMasuk = (int) ($masukByPeriod[$p->id] ?? 0);
+
+                $totalKeluar = (int) DB::table('cash_expenses')
+                    ->where('class_year_id', $yearId)
+                    ->whereBetween('date', [$p->date_start, $p->date_end])
+                    ->sum('amount');
+
+                return (object) [
+                    'id'           => $p->id,
+                    'week_no'      => $p->week_no,
+                    'date_start'   => $p->date_start,
+                    'date_end'     => $p->date_end,
+                    'status'       => $p->status,
+                    'total_masuk'  => $totalMasuk,
+                    'total_keluar' => $totalKeluar,
+                ];
+            });
+
+            /*
+            |----------------------------------------------------------
+            | 5. Data untuk Chart.js
+            |----------------------------------------------------------
+            */
+            $chartLabels = $rekapPeriode
+                ->map(fn ($r) => 'Minggu ' . $r->week_no)
+                ->toArray();
+
+            $chartMasuk = $rekapPeriode
+                ->map(fn ($r) => $r->total_masuk)
+                ->toArray();
+
+            $chartKeluar = $rekapPeriode
+                ->map(fn ($r) => $r->total_keluar)
+                ->toArray();
+        }
 
         /*
-        |----------------------------------------------------------
-        | 5. Data untuk Chart.js (kalau nanti mau dipakai)
-        |----------------------------------------------------------
+        |--------------------------------------------------------------
+        | 6. Info siswa & bendahara
+        |--------------------------------------------------------------
         */
-        $chartLabels = $rekapPeriode
-            ->map(fn ($r) => 'Minggu ' . $r->week_no)
-            ->toArray();
+        $totalSiswa      = $year->enrollments()->count();
+        $siswaAktif      = $year->enrollments()->where('is_active', true)->count();
+        $siswaNonaktif   = $totalSiswa - $siswaAktif;
+        $jumlahBendahara = $year->enrollments()->where('is_treasurer', true)->count();
 
-        $chartMasuk = $rekapPeriode
-            ->map(fn ($r) => $r->total_masuk)
-            ->toArray();
+        $bendaharaList = $year->enrollments()
+            ->where('is_treasurer', true)
+            ->with('user:id,name')
+            ->get()
+            ->pluck('user.name')
+            ->filter()
+            ->values();
 
-        $chartKeluar = $rekapPeriode
-            ->map(fn ($r) => $r->total_keluar)
-            ->toArray();
+        // LOG: guru buka ringkasan 1 tahun ajaran
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'year.summary.view',
+                'entity_type'   => 'class_year',
+                'entity_id'     => $year->id,
+                'from_json'     => null,
+                'to_json'       => [
+                    'total_masuk'      => $totalMasuk,
+                    'total_keluar'     => $totalKeluar,
+                    'saldo_akhir'      => $saldoAkhir,
+                    'total_siswa'      => $totalSiswa,
+                    'siswa_aktif'      => $siswaAktif,
+                    'siswa_nonaktif'   => $siswaNonaktif,
+                    'jumlah_bendahara' => $jumlahBendahara,
+                    'bendahara'        => $bendaharaList->all(),
+                ],
+            ]);
+        } catch (\Throwable $e) {}
+
+        /*
+        |--------------------------------------------------------------
+        | 7. Kirim ke view
+        |--------------------------------------------------------------
+        */
+        return view('year.summary', [
+            'year'            => $year,
+
+            'totalMasuk'      => $totalMasuk,
+            'totalKeluar'     => $totalKeluar,
+            'saldoAkhir'      => $saldoAkhir,
+            'saldoKas'        => $saldoAkhir,
+
+            'rekapPeriode'    => $rekapPeriode,
+            'chartLabels'     => $chartLabels,
+            'chartMasuk'      => $chartMasuk,
+            'chartKeluar'     => $chartKeluar,
+
+            'totalSiswa'      => $totalSiswa,
+            'siswaAktif'      => $siswaAktif,
+            'siswaNonaktif'   => $siswaNonaktif,
+            'jumlahBendahara' => $jumlahBendahara,
+            'bendaharaList'   => $bendaharaList,
+        ]);
     }
-
-    /*
-    |--------------------------------------------------------------
-    | 6. Info siswa & bendahara
-    |--------------------------------------------------------------
-    */
-    $totalSiswa      = $year->enrollments()->count();
-    $siswaAktif      = $year->enrollments()->where('is_active', true)->count();
-    $siswaNonaktif   = $totalSiswa - $siswaAktif;
-    $jumlahBendahara = $year->enrollments()->where('is_treasurer', true)->count();
-
-    // List nama bendahara (untuk ditampilkan di Blade)
-    $bendaharaList = $year->enrollments()
-        ->where('is_treasurer', true)
-        ->with('user:id,name')
-        ->get()
-        ->pluck('user.name')
-        ->filter()
-        ->values();
-
-    /*
-    |--------------------------------------------------------------
-    | 7. Kirim ke view
-    |--------------------------------------------------------------
-    */
-    return view('year.summary', [
-        'year'            => $year,
-
-        'totalMasuk'      => $totalMasuk,
-        'totalKeluar'     => $totalKeluar,
-        'saldoAkhir'      => $saldoAkhir,
-        'saldoKas'        => $saldoAkhir, // supaya boleh pakai nama sama seperti dashboard
-
-        'rekapPeriode'    => $rekapPeriode,
-        'chartLabels'     => $chartLabels,
-        'chartMasuk'      => $chartMasuk,
-        'chartKeluar'     => $chartKeluar,
-
-        'totalSiswa'      => $totalSiswa,
-        'siswaAktif'      => $siswaAktif,
-        'siswaNonaktif'   => $siswaNonaktif,
-        'jumlahBendahara' => $jumlahBendahara,
-        'bendaharaList'   => $bendaharaList,
-    ]);
-}
-
 
     // ====== HAPUS satu siswa ======
     public function destroyEnrollment(Request $request, ClassYear $year, StudentEnrollment $enrollment)
@@ -571,7 +974,29 @@ class YearController extends Controller
             return back()->withErrors('Tidak bisa menghapus bendahara yang masih aktif. Ubah bendahara dulu atau nonaktifkan.');
         }
 
+        // Snapshot sebelum dihapus
+        $before = [
+            'student_user_id' => $enrollment->student_user_id,
+            'nis'             => $enrollment->nis,
+            'is_active'       => (bool) $enrollment->is_active,
+            'is_treasurer'    => (bool) $enrollment->is_treasurer,
+        ];
+        $enrollmentId = $enrollment->id;
+
         $enrollment->delete();
+
+        // LOG: hapus siswa dari tahun ini
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => auth()->id(),
+                'action'        => 'student.delete',
+                'entity_type'   => 'student_enrollment',
+                'entity_id'     => $enrollmentId,
+                'from_json'     => $before,
+                'to_json'       => ['deleted' => true],
+            ]);
+        } catch (\Throwable $e) {}
 
         return back()->with('success', 'Siswa dihapus dari tahun ini.');
     }

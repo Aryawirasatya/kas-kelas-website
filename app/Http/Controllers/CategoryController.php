@@ -3,64 +3,169 @@
 namespace App\Http\Controllers;
 
 use App\Models\Category;
+use App\Models\ClassYear;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 
 class CategoryController extends Controller
 {
-    public function index()
+    /**
+     * Tampilkan daftar kategori (global, tidak per-tahun).
+     */
+    public function index(Request $request)
     {
-        $categories = Category::orderBy('id', 'desc')->get();
-        return view('categories.index', compact('categories'));
+        $user       = $request->user();
+        $activeYear = ClassYear::active()->latest('id')->first(); // cuma buat konteks, boleh juga dihapus
+
+        // KATEGORI GLOBAL → TIDAK PAKAI class_year_id, tidak pakai is_active
+        $categories = Category::orderBy('type')
+            ->orderBy('name')
+            ->get();
+
+        // Activity log (opsional)
+        try {
+            ActivityLog::record(
+                'category.index.view',
+                null,
+                $activeYear?->id,
+                null,
+                [
+                    'total'       => $categories->count(),
+                    'has_year'    => (bool) $activeYear,
+                    'actor_id'    => $user?->id,
+                    'actor_roles' => $user?->getRoleNames()->all(),
+                ]
+            );
+        } catch (\Throwable $e) {
+            // jangan sampai log bikin error
+        }
+
+        return view('categories.index', compact('categories', 'activeYear'));
     }
 
-    public function create()
+    /**
+     * Form tambah kategori baru.
+     */
+    public function create(Request $request)
     {
-        return view('categories.create');
+        $activeYear = ClassYear::active()->latest('id')->first();
+
+        return view('categories.create', [
+            'activeYear' => $activeYear,
+        ]);
     }
 
+    /**
+     * Simpan kategori baru (GLOBAL, type = 'expense' fix).
+     */
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'name'        => 'required|string|max:100',
-            'description' => 'nullable|string',
+        $user       = $request->user();
+        $activeYear = ClassYear::active()->latest('id')->first();
+
+        $data = $request->validate([
+            'name'        => ['required', 'string', 'max:100'],
+            'description' => ['nullable', 'string', 'max:255'],
+            // tidak ada 'type' & 'is_active' dari form
         ]);
 
-        $validated['type'] = 'expense'; // otomatis isi
+        $category = Category::create([
+            'name'        => $data['name'],
+            'description' => $data['description'] ?? null,
+            'type'        => 'expense', // fix, karena kategori dipakai untuk pengeluaran
+        ]);
 
-        Category::create($validated);
+        // LOG: kategori dibuat
+        try {
+            ActivityLog::record(
+                'category.created',
+                $category,
+                $activeYear?->id,
+                null,
+                $category->toArray()
+            );
+        } catch (\Throwable $e) {}
 
         return redirect()
             ->route('categories.index')
-            ->with('success', 'Kategori pengeluaran berhasil ditambahkan.');
+            ->with('success', 'Kategori berhasil dibuat.');
     }
 
+    /**
+     * Form edit kategori.
+     */
     public function edit(Category $category)
     {
-        return view('categories.edit', compact('category'));
+        $activeYear = ClassYear::active()->latest('id')->first();
+
+        return view('categories.edit', [
+            'category'   => $category,
+            'activeYear' => $activeYear,
+        ]);
     }
 
+    /**
+     * Update kategori global (hanya name & description).
+     */
     public function update(Request $request, Category $category)
     {
-        $validated = $request->validate([
-            'name'        => 'required|string|max:100',
-            'description' => 'nullable|string',
+        $user       = $request->user();
+        $activeYear = ClassYear::active()->latest('id')->first();
+
+        $data = $request->validate([
+            'name'        => ['required', 'string', 'max:100'],
+            'description' => ['nullable', 'string', 'max:255'],
+            // tidak ada 'type', tidak ada 'is_active'
         ]);
 
-        $validated['type'] = 'expense'; // tetap pakai expense
+        $before = $category->toArray();
 
-        $category->update($validated);
+        $category->update([
+            'name'        => $data['name'],
+            'description' => $data['description'] ?? null,
+            // 'type' dibiarkan apa adanya (biasanya 'expense')
+        ]);
+
+        // LOG: kategori di-update
+        try {
+            ActivityLog::record(
+                'category.updated',
+                $category,
+                $activeYear?->id,
+                $before,
+                $category->toArray()
+            );
+        } catch (\Throwable $e) {}
 
         return redirect()
             ->route('categories.index')
-            ->with('success', 'Kategori pengeluaran berhasil diperbarui.');
+            ->with('success', 'Kategori berhasil diperbarui.');
     }
 
-    public function destroy(Category $category)
-    {
-        $category->delete();
+    /**
+     * Hapus kategori.
+     */
+    public function destroy(Request $request, Category $category)
+{
+    $activeYear = ClassYear::active()->latest('id')->first();
+    $before     = $category->toArray();
 
-        return redirect()
-            ->route('categories.index')
-            ->with('success', 'Kategori berhasil dihapus.');
-    }
+    $category->delete();
+
+    try {
+        ActivityLog::record(
+            'category.deleted',
+            null,
+            $activeYear?->id,
+            $before,
+            [
+                'message' => 'Kategori pengeluaran dihapus',
+            ]
+        );
+    } catch (\Throwable $e) {}
+
+    return redirect()
+        ->route('categories.index')
+        ->with('success', 'Kategori berhasil dihapus.');
+}
 }
