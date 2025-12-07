@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CashExpense;
 use App\Models\CashPayment;
+use App\Models\ActivityLog;   
 use App\Models\ExpenseRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,7 +18,7 @@ class CashExpenseController extends Controller
      * - Cek saldo dulu, kalau tidak cukup → error.
      * - Kalau cukup → buat baris di cash_expenses + update expense_requests jadi approved.
      */
-    public function approveFromRequest(Request $request, ExpenseRequest $expenseRequest)
+      public function approveFromRequest(Request $request, ExpenseRequest $expenseRequest)
     {
         $user = Auth::user();
 
@@ -41,9 +42,16 @@ class CashExpenseController extends Controller
                 ->with('error', 'Saldo kas saat ini tidak mencukupi untuk menyetujui pengajuan ini.');
         }
 
-        DB::transaction(function () use ($expenseRequest, $user) {
-            // Catat pengeluaran ke tabel cash_expenses
-            CashExpense::create([
+        DB::transaction(function () use ($expenseRequest, $user, $classYearId) {
+            // 🔹 Snapshot sebelum perubahan status
+            $before = [
+                'status'       => $expenseRequest->status,
+                'approved_by'  => $expenseRequest->approved_by,
+                'approved_at'  => $expenseRequest->approved_at,
+            ];
+
+            // 1) Catat pengeluaran ke tabel cash_expenses
+            $cashExpense = CashExpense::create([
                 'class_year_id' => $expenseRequest->class_year_id,
                 'request_id'    => $expenseRequest->id,
                 'date'          => now()->toDateString(), // atau $expenseRequest->request_date jika mau
@@ -54,15 +62,47 @@ class CashExpenseController extends Controller
                 'description'   => $expenseRequest->description,
             ]);
 
-            // Update status pengajuan
+            // 2) Update status pengajuan
             $expenseRequest->update([
-                'status'      => 'approved',
-                'approved_by' => $user->id,
-                'approved_at' => now(),
+                'status'        => 'approved',
+                'approved_by'   => $user->id,
+                'approved_at'   => now(),
                 'reject_reason' => null,
             ]);
 
-            // TODO: Activity log (Task 13)
+            $expenseRequest->refresh();
+
+            // 3) 🔹 Log: pengajuan disetujui
+            ActivityLog::record(
+                'expense_request.approved',
+                $expenseRequest,
+                $classYearId,
+                $before,
+                [
+                    'message'      => 'Pengajuan pengeluaran disetujui',
+                    'status'       => $expenseRequest->status,
+                    'amount'       => $expenseRequest->amount,
+                    'category_id'  => $expenseRequest->category_id,
+                    'approved_by'  => $user->id,
+                    'approved_at'  => $expenseRequest->approved_at,
+                ]
+            );
+
+            // 4) 🔹 Log: pengeluaran kas tercatat
+            ActivityLog::record(
+                'cash_expense.created',
+                $cashExpense,
+                $classYearId,
+                null,
+                [
+                    'message'      => 'Pengeluaran kas tercatat',
+                    'amount'       => $cashExpense->amount,
+                    'category_id'  => $cashExpense->category_id,
+                    'request_id'   => $cashExpense->request_id,
+                    'approved_by'  => $cashExpense->approved_by,
+                    'posted_at'    => $cashExpense->posted_at,
+                ]
+            );
         });
 
         return redirect()

@@ -2,108 +2,218 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
+use App\Models\ActivityLog;
+use App\Models\UnpaidReason;
 use App\Services\CashService;
-use App\Models\ClassYear;
-use App\Models\CashPeriod;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
-/**
- * Kelola "Alasan Belum Lunas" untuk periode berjalan.
- *
- * Aturan:
- * - Alasan hanya bisa dibuat/diubah saat ada PERIODE OPEN (minggu berjalan).
- * - Disimpan satu baris per (class_year_id, period_id, enrollment_id).
- * - Menggunakan CashService::upsertReason() agar konsisten (kalau reason kosong, data dihapus).
- */
 class UnpaidReasonController extends Controller
 {
-    public function __construct(private CashService $svc)
+    public function __construct(private CashService $svc) {}
+
+    // ============================
+    // HALAMAN KHUSUS (opsional)
+    // ============================
+    public function index(Request $request)
     {
-        // Jika perlu, lindungi dengan middleware role:
-        // $this->middleware(['role:guru|bendahara']);
+        $user   = $request->user();
+        $year   = $this->svc->getActiveYear();
+        $period = $year ? $this->svc->getOpenPeriod($year) : null;
+        $nominal = $year ? $this->svc->nominal($year) : 0;
+
+        if (!$year || !$period || $nominal <= 0) {
+            return view('unpaid.index', [
+                'year'       => $year,
+                'period'     => $period,
+                'nominal'    => $nominal,
+                'rows'       => collect(),
+                'reasonsMap' => collect(),
+            ]);
+        }
+
+        $enrollments = $this->svc->activeEnrollments($year);
+
+        $reasonsMap = UnpaidReason::where('class_year_id', $year->id)
+            ->where('period_id', $period->id)
+            ->pluck('reason', 'enrollment_id');
+
+        $rows = $enrollments->map(function ($en) use ($period, $nominal, $reasonsMap) {
+            $total  = $this->svc->totalPaidForEnrollment($period, $en->id);
+            $status = $this->svc->statusForStudent($nominal, $total);
+            $reason = $reasonsMap[$en->id] ?? null;
+
+            return (object) [
+                'enrollment' => $en,
+                'user'       => $en->user,
+                'total'      => $total,
+                'status'     => $status,
+                'reason'     => $reason,
+            ];
+        })->filter(fn ($r) => $r->status === 'BELUM');
+
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => $user?->id,
+                'action'        => 'unpaid_reason.view_form',
+                'entity_type'   => 'cash_period',
+                'entity_id'     => $period->id,
+                'from_json'     => null,
+                'to_json'       => [
+                    'period_id'   => $period->id,
+                    'week_no'     => $period->week_no,
+                    'belum_count' => $rows->count(),
+                    'nominal'     => $nominal,
+                ],
+            ]);
+        } catch (\Throwable $e) {}
+
+        return view('unpaid.index', [
+            'year'       => $year,
+            'period'     => $period,
+            'nominal'    => $nominal,
+            'rows'       => $rows,
+            'reasonsMap' => $reasonsMap,
+        ]);
+    }
+
+  
+    public function store(Request $request)
+{
+    $user   = $request->user();
+    $year   = $this->svc->getActiveYear();
+    $period = $year ? $this->svc->getOpenPeriod($year) : null;
+
+    if (!$year || !$period) {
+        return back()->withErrors('Tahun ajaran atau periode aktif tidak ditemukan.');
     }
 
     /**
-     * Simpan alasan untuk siswa pada PERIODE OPEN saat ini.
-     * Request fields:
-     * - enrollment_id: id pada tabel student_enrollments
-     * - reason       : teks alasan (1..255)
+     * MODE 1: SINGLE (dipanggil dari modal di halaman KAS)
+     * -> kirim: enrollment_id + reason
+     * route: cash.unpaidReason.store (POST /kas/unpaid-reason)
      */
-    public function store(Request $req)
-    {
-        $req->validate([
+    if ($request->has('enrollment_id')) {
+
+        $data = $request->validate([
             'enrollment_id' => ['required', 'integer', 'exists:student_enrollments,id'],
             'reason'        => ['required', 'string', 'max:255'],
         ]);
 
-        // Tahun aktif & periode OPEN
-        $year   = ClassYear::active()->latest('id')->firstOrFail();
-        $period = $this->svc->getOpenPeriod($year);
-        if (!$period) {
-            return back()->withErrors(['reason' => 'Tidak ada periode OPEN.']);
-        }
+        $enrollmentId = (int) $data['enrollment_id'];
 
-        DB::transaction(function () use ($req, $year, $period) {
-            $this->svc->upsertReason(
-                (int)$year->id,
-                (int)$period->id,
-                (int)$req->integer('enrollment_id'),
-                trim((string)$req->input('reason')),
-                Auth::id()
-            );
-        });
+        // snapshot sebelum (untuk log)
+        $before = UnpaidReason::where('class_year_id', $year->id)
+            ->where('period_id', $period->id)
+            ->where('enrollment_id', $enrollmentId)
+            ->first();
 
-        return back()->with('success', 'Alasan tersimpan.');
+        $beforeArr = $before
+            ? $before->only(['enrollment_id', 'reason', 'set_by'])
+            : null;
+
+        // upsert 1 baris (SELALU isi set_by)
+        $record = UnpaidReason::updateOrCreate(
+            [
+                'class_year_id' => $year->id,
+                'period_id'     => $period->id,
+                'enrollment_id' => $enrollmentId,
+            ],
+            [
+                'reason'        => $data['reason'],
+                'set_by'        => $user?->id,   // ⬅️ PENTING
+            ]
+        );
+
+        // snapshot sesudah
+        $afterArr = $record->only(['enrollment_id', 'reason', 'set_by']);
+
+        // LOG
+        try {
+            ActivityLog::create([
+                'class_year_id' => $year->id,
+                'actor_id'      => $user?->id,
+                'action'        => 'unpaid_reason.save_single',
+                'entity_type'   => 'student_enrollment',
+                'entity_id'     => $enrollmentId,
+                'from_json'     => $beforeArr,
+                'to_json'       => $afterArr,
+            ]);
+        } catch (\Throwable $e) {}
+
+        return back()->with('success', 'Alasan belum bayar disimpan.');
     }
 
     /**
-     * Perbarui alasan pada PERIODE OPEN (semantik sama seperti store).
-     * Kamu bisa pakai route PUT/PATCH ke endpoint yang sama.
+     * MODE 2: BULK (halaman khusus, kirim reasons[enrollment_id] = "...")
      */
-    public function update(Request $req)
-    {
-        // Supaya kuat, tetap validasi exists & panjang reason
-        $req->validate([
-            'enrollment_id' => ['required', 'integer', 'exists:student_enrollments,id'],
-            'reason'        => ['required', 'string', 'max:255'],
-        ]);
+    $data = $request->validate([
+        'reasons'   => ['nullable', 'array'],
+        'reasons.*' => ['nullable', 'string', 'max:255'],
+    ]);
 
-        // Reuse store: tetap memastikan periode OPEN
-        return $this->store($req);
-    }
+    $reasons = $data['reasons'] ?? [];
 
-    /**
-     * (Opsional) Hapus alasan untuk siswa di PERIODE OPEN.
-     * Kalau kamu butuh tombol "Hapus Alasan", arahkan ke method ini.
-     *
-     * Request fields:
-     * - enrollment_id: id pada tabel student_enrollments
-     */
-    public function destroy(Request $req)
-    {
-        $req->validate([
-            'enrollment_id' => ['required', 'integer', 'exists:student_enrollments,id'],
-        ]);
+    // Snapshot sebelum untuk seluruh periode
+    $before = UnpaidReason::where('class_year_id', $year->id)
+        ->where('period_id', $period->id)
+        ->get()
+        ->map(fn ($r) => $r->only(['enrollment_id', 'reason', 'set_by']))
+        ->values()
+        ->all();
 
-        $year   = ClassYear::active()->latest('id')->firstOrFail();
-        $period = $this->svc->getOpenPeriod($year);
-        if (!$period) {
-            return back()->withErrors(['reason' => 'Tidak ada periode OPEN.']);
+    DB::transaction(function () use ($year, $period, $reasons, $user) {
+        // HAPUS DULU SEMUA alasan periode ini (khusus mode bulk)
+        UnpaidReason::where('class_year_id', $year->id)
+            ->where('period_id', $period->id)
+            ->delete();
+
+        $insertRows = [];
+        foreach ($reasons as $enrollmentId => $reasonText) {
+            $reasonText = trim((string) $reasonText);
+            if ($reasonText === '') {
+                continue;
+            }
+
+            $insertRows[] = [
+                'class_year_id'  => $year->id,
+                'period_id'      => $period->id,
+                'enrollment_id'  => (int) $enrollmentId,
+                'reason'         => $reasonText,
+                'set_by'         => $user?->id,   // ⬅️ DIISI JUGA
+                'created_at'     => now(),
+                'updated_at'     => now(),
+            ];
         }
 
-        DB::transaction(function () use ($req, $year, $period) {
-            // Kirim reason kosong → CashService akan menghapus baris existing
-            $this->svc->upsertReason(
-                (int)$year->id,
-                (int)$period->id,
-                (int)$req->integer('enrollment_id'),
-                '', // kosongkan → hapus
-                Auth::id()
-            );
-        });
+        if (!empty($insertRows)) {
+            UnpaidReason::insert($insertRows);
+        }
+    });
 
-        return back()->with('success', 'Alasan dihapus.');
-    }
+    // Snapshot sesudah
+    $after = UnpaidReason::where('class_year_id', $year->id)
+        ->where('period_id', $period->id)
+        ->get()
+        ->map(fn ($r) => $r->only(['enrollment_id', 'reason', 'set_by']))
+        ->values()
+        ->all();
+
+    // LOG: simpan massal
+    try {
+        ActivityLog::create([
+            'class_year_id' => $year->id,
+            'actor_id'      => $user?->id,
+            'action'        => 'unpaid_reason.save_bulk',
+            'entity_type'   => 'cash_period',
+            'entity_id'     => $period->id,
+            'from_json'     => $before,
+            'to_json'       => $after,
+        ]);
+    } catch (\Throwable $e) {}
+
+    return back()->with('success', 'Alasan belum bayar disimpan.');
+}
+
 }

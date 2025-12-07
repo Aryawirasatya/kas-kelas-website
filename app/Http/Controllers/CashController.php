@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StorePaymentRequest;
 use App\Http\Requests\UpdatePaymentRequest;
 use App\Models\CashPayment;
+use App\Models\ActivityLog;
 use App\Services\CashService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -56,7 +57,6 @@ class CashController extends Controller
             'terkumpul'   => $period
                 ? (int) DB::table('cash_payments')->where('period_id', $period->id)->sum('amount')
                 : 0,
-                
         ];
 
         // Riwayat pembayaran minggu ini -> groupBy enrollment_id
@@ -124,7 +124,6 @@ class CashController extends Controller
 
         $rekap['tunggakan_total'] = (int) $tunggakanTotal;
 
-
         // Blade kadang cek $lateOptions atau $arrearsByStudent -> kita set alias
         $lateOptions = $arrearsByStudent;
 
@@ -176,6 +175,17 @@ class CashController extends Controller
                 'created_at'    => now(),
                 'updated_at'    => now(),
             ]);
+
+            // snapshot untuk log
+            $paymentSnapshot = [
+                'class_year_id' => $classYearId,
+                'period_id'     => (int) $period->id,
+                'enrollment_id' => $enrollmentId,
+                'amount'        => (int) $req->amount,
+                'date'          => $req->date,
+                'note'          => $req->note,
+                'received_by'   => auth()->id(),
+            ];
 
             // Ambil nominal & yearId utk hitung tunggakan
             $yearId  = (int) DB::table('cash_periods')->where('id', $period->id)->value('class_year_id');
@@ -259,24 +269,33 @@ class CashController extends Controller
             // c) Sisa left (kalau ada) otomatis dianggap murni milik periode OPEN saat ini
             //    (tidak perlu dicatat apa² lagi, karena sudah tercatat di cash_payments di atas)
 
-            // 3) Activity log (best effort)
+            // 3) Activity log (pakai schema baru)
             try {
                 $flags = [];
                 if ($arrears->isNotEmpty()) {
-                    $flags[] = 'auto-tunggakan';
+                    $flags[] = 'auto_tunggakan';
                 }
                 if ($targetPeriodId) {
-                    $flags[] = 'alokasi-manual#' . $targetPeriodId;
+                    $flags[] = 'alloc_manual#' . $targetPeriodId;
+                }
+                if ($autoSplit) {
+                    $flags[] = 'auto_split_legacy';
+                }
+                if ($allocArrears) {
+                    $flags[] = 'alloc_arrears_legacy';
                 }
 
-                DB::table('activity_logs')->insert([
+                ActivityLog::create([
                     'class_year_id' => $classYearId,
                     'actor_id'      => auth()->id(),
-                    'action'        => 'payment.create',
-                    'description'   => 'Tambah pembayaran enrollment #' . $enrollmentId . ' period #' . $period->id . ' Rp ' . number_format($req->amount, 0, ',', '.')
-                        . (!empty($flags) ? ' (' . implode(', ', $flags) . ')' : ''),
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
+                    'action'        => 'cash_payment.create',
+                    'entity_type'   => 'cash_payment',
+                    'entity_id'     => $paymentId,
+                    'from_json'     => null,
+                    'to_json'       => [
+                        'payment' => $paymentSnapshot,
+                        'flags'   => $flags,
+                    ],
                 ]);
             } catch (\Throwable $e) {
                 // silent
@@ -298,19 +317,26 @@ class CashController extends Controller
         }
 
         DB::transaction(function () use ($req, $pay, $classYearId) {
+            // snapshot sebelum
+            $before = $pay->only(['id', 'class_year_id', 'period_id', 'enrollment_id', 'amount', 'date', 'note']);
+
             $pay->amount = (int) $req->amount;
             $pay->date   = $req->date;
             $pay->note   = $req->note ?? null;
             $pay->save();
 
+            // snapshot sesudah
+            $after = $pay->fresh()->only(['id', 'class_year_id', 'period_id', 'enrollment_id', 'amount', 'date', 'note']);
+
             try {
-                DB::table('activity_logs')->insert([
+                ActivityLog::create([
                     'class_year_id' => $classYearId,
                     'actor_id'      => auth()->id(),
-                    'action'        => 'payment.update',
-                    'description'   => 'Edit pembayaran ID #' . $pay->id,
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
+                    'action'        => 'cash_payment.update',
+                    'entity_type'   => 'cash_payment',
+                    'entity_id'     => $pay->id,
+                    'from_json'     => $before,
+                    'to_json'       => $after,
                 ]);
             } catch (\Throwable $e) {
                 // silent
@@ -322,46 +348,52 @@ class CashController extends Controller
 
     /** Hapus pembayaran (hapus alokasinya otomatis karena FK cascade) */
     public function destroy(Request $req, CashPayment $pay)
-    {
-        $reason = trim((string) $req->input('reason', ''));
-        if ($reason === '') {
-            return back()->withErrors(['reason' => 'Alasan penghapusan wajib diisi.']);
-        }
-
-        $period = DB::table('cash_periods')->where('id', $pay->period_id)->first();
-        if (!$period || $period->status !== 'open') {
-            return back()->withErrors(['amount' => 'Periode sudah ditutup. Transaksi tidak dapat dihapus.']);
-        }
-
-        $snapshot = [
-            'class_year_id' => $pay->class_year_id,
-            'period_id'     => $pay->period_id,
-            'enrollment_id' => $pay->enrollment_id,
-            'amount'        => $pay->amount,
-            'date'          => $pay->date,
-            'note'          => $pay->note,
-            'received_by'   => $pay->received_by,
-        ];
-
-        DB::transaction(function () use ($pay, $snapshot, $reason) {
-            $pay->delete();
-
-            try {
-                DB::table('activity_logs')->insert([
-                    'class_year_id' => $snapshot['class_year_id'],
-                    'actor_id'      => auth()->id(),
-                    'action'        => 'payment.delete',
-                    'description'   => 'Hapus pembayaran ID #' . $pay->id . ' reason: ' . $reason . ' snapshot: ' . json_encode($snapshot),
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
-                ]);
-            } catch (\Throwable $e) {
-                // silent
-            }
-        });
-
-        return back()->with('success', 'Pembayaran dihapus.');
+{
+    $reason = trim((string) $req->input('reason', ''));
+    if ($reason === '') {
+        return back()->withErrors(['reason' => 'Alasan penghapusan wajib diisi.']);
     }
+
+    $period = DB::table('cash_periods')->where('id', $pay->period_id)->first();
+    if (!$period || $period->status !== 'open') {
+        return back()->withErrors(['amount' => 'Periode sudah ditutup. Transaksi tidak dapat dihapus.']);
+    }
+
+    $snapshot = [
+        'class_year_id' => $pay->class_year_id,
+        'period_id'     => $pay->period_id,
+        'enrollment_id' => $pay->enrollment_id,
+        'amount'        => $pay->amount,
+        'date'          => $pay->date,
+        'note'          => $pay->note,
+        'received_by'   => $pay->received_by,
+    ];
+
+    DB::transaction(function () use ($pay, $snapshot, $reason) {
+        $payId       = $pay->id;
+        $classYearId = (int) $snapshot['class_year_id'];
+
+        $pay->delete();
+
+        try {
+            ActivityLog::record(
+                'cash_payment.deleted',
+                $pay,
+                $classYearId,
+                $snapshot,
+                [
+                    'message' => 'Transaksi kas mingguan dihapus',
+                    'reason'  => $reason,
+                    'amount'  => $snapshot['amount'] ?? null,
+                ]
+            );
+        } catch (\Throwable $e) {
+            // silent
+        }
+    });
+
+    return back()->with('success', 'Pembayaran dihapus.');
+}
 
     // ===================== Helpers =====================
 

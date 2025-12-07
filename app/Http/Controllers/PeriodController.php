@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\CreatePeriodRequest;
 use App\Models\CashPeriod;
 use App\Models\ClassYear;
-use App\Models\ActivityLog; // sesuaikan kalau nama model log beda
+use App\Models\ActivityLog;
 use App\Services\PeriodService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -40,41 +40,34 @@ class PeriodController extends Controller
     {
         $year = ClassYear::active()->latest('id')->firstOrFail();
 
-        // ==============================
-        // MODE PRODUKSI (pakai HARI INI)
-        // ==============================
+        // PRODUKSI: pakai hari ini
         $start = Carbon::today();
-
-        // ==============================
-        // MODE TEST (seolah MINGGU DEPAN)
-        // ==============================
-        // kalau mau seolah-olah minggu depan:
-        // $start = Carbon::today()->addWeek();  
         $end   = (clone $start)->addDays(4);
 
         try {
             // Buat & OPEN (cek overlap + single-open ada di PeriodService::createOneWeek)
             $period = $this->service->createOneWeek($year, $start, $end, openImmediately: true);
         } catch (\RuntimeException $e) {
-            // Misal: "Rentang tanggal minggu baru bertabrakan dengan periode lain."
             return back()->withErrors($e->getMessage());
         } catch (\Throwable $e) {
-            // Guard tambahan kalau ada error lain tak terduga
             return back()->withErrors('Gagal membuat periode baru: '.$e->getMessage());
         }
 
-        // LOG (opsional)
+        // LOG pakai schema baru
         try {
             ActivityLog::create([
-                'actor_id'  => $request->user()->id ?? null,
-                'action'    => 'period.create_today',
-                'entity'    => 'cash_period',
-                'entity_id' => $period->id,
-                'meta'      => json_encode([
+                'class_year_id' => $year->id,
+                'actor_id'      => $request->user()->id ?? null,
+                'action'        => 'period.create_today',
+                'entity_type'   => 'cash_period',
+                'entity_id'     => $period->id,
+                'from_json'     => null,
+                'to_json'       => [
                     'week_no'    => $period->week_no,
                     'date_start' => $period->date_start->toDateString(),
                     'date_end'   => $period->date_end->toDateString(),
-                ]),
+                    'status'     => $period->status,
+                ],
             ]);
         } catch (\Throwable $e) {}
 
@@ -85,7 +78,7 @@ class PeriodController extends Controller
     }
 
     /**
-     * OPS A: Buat periode custom (tanggal mulai & akhir dari user).
+     * OPS B: Buat periode custom (tanggal mulai & akhir dari user).
      */
     public function createCustom(CreatePeriodRequest $request)
     {
@@ -105,15 +98,18 @@ class PeriodController extends Controller
 
         try {
             ActivityLog::create([
-                'actor_id'  => $request->user()->id ?? null,
-                'action'    => 'period.create_custom',
-                'entity'    => 'cash_period',
-                'entity_id' => $period->id,
-                'meta'      => json_encode([
+                'class_year_id' => $year->id,
+                'actor_id'      => $request->user()->id ?? null,
+                'action'        => 'period.create_custom',
+                'entity_type'   => 'cash_period',
+                'entity_id'     => $period->id,
+                'from_json'     => null,
+                'to_json'       => [
                     'week_no'    => $period->week_no,
                     'date_start' => $period->date_start->toDateString(),
                     'date_end'   => $period->date_end->toDateString(),
-                ]),
+                    'status'     => $period->status,
+                ],
             ]);
         } catch (\Throwable $e) {}
 
@@ -131,6 +127,14 @@ class PeriodController extends Controller
             return back()->withErrors('Periode tidak termasuk tahun ajaran aktif.');
         }
 
+        $before = [
+            'id'        => $period->id,
+            'week_no'   => $period->week_no,
+            'status'    => $period->status,
+            'date_start'=> optional($period->date_start)->toDateString(),
+            'date_end'  => optional($period->date_end)->toDateString(),
+        ];
+
         try {
             $this->service->open($year, $period);
         } catch (\RuntimeException $e) {
@@ -139,17 +143,25 @@ class PeriodController extends Controller
             return back()->withErrors('Gagal membuka periode: '.$e->getMessage());
         }
 
+        $period->refresh();
+
+        $after = [
+            'id'        => $period->id,
+            'week_no'   => $period->week_no,
+            'status'    => $period->status,
+            'date_start'=> optional($period->date_start)->toDateString(),
+            'date_end'  => optional($period->date_end)->toDateString(),
+        ];
+
         try {
             ActivityLog::create([
-                'actor_id'  => $request->user()->id ?? null,
-                'action'    => 'period.open',
-                'entity'    => 'cash_period',
-                'entity_id' => $period->id,
-                'meta'      => json_encode([
-                    'week_no'    => $period->week_no,
-                    'date_start' => $period->date_start,
-                    'date_end'   => $period->date_end,
-                ]),
+                'class_year_id' => $year->id,
+                'actor_id'      => $request->user()->id ?? null,
+                'action'        => 'period.open',
+                'entity_type'   => 'cash_period',
+                'entity_id'     => $period->id,
+                'from_json'     => $before,
+                'to_json'       => $after,
             ]);
         } catch (\Throwable $e) {}
 
@@ -173,23 +185,39 @@ class PeriodController extends Controller
             return back()->withErrors('Periode tidak termasuk tahun ajaran aktif.');
         }
 
+        $before = [
+            'id'        => $period->id,
+            'week_no'   => $period->week_no,
+            'status'    => $period->status,
+            'date_start'=> optional($period->date_start)->toDateString(),
+            'date_end'  => optional($period->date_end)->toDateString(),
+        ];
+
         try {
             $this->service->close($period);
         } catch (\Throwable $e) {
             return back()->withErrors('Gagal menutup periode: '.$e->getMessage());
         }
 
+        $period->refresh();
+
+        $after = [
+            'id'        => $period->id,
+            'week_no'   => $period->week_no,
+            'status'    => $period->status,
+            'date_start'=> optional($period->date_start)->toDateString(),
+            'date_end'  => optional($period->date_end)->toDateString(),
+        ];
+
         try {
             ActivityLog::create([
-                'actor_id'  => $request->user()->id ?? null,
-                'action'    => 'period.close',
-                'entity'    => 'cash_period',
-                'entity_id' => $period->id,
-                'meta'      => json_encode([
-                    'week_no'    => $period->week_no,
-                    'date_start' => $period->date_start,
-                    'date_end'   => $period->date_end,
-                ]),
+                'class_year_id' => $year->id,
+                'actor_id'      => $request->user()->id ?? null,
+                'action'        => 'period.close',
+                'entity_type'   => 'cash_period',
+                'entity_id'     => $period->id,
+                'from_json'     => $before,
+                'to_json'       => $after,
             ]);
         } catch (\Throwable $e) {}
 

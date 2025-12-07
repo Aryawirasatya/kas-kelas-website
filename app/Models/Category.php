@@ -9,23 +9,12 @@ class Category extends Model
     protected $table = 'categories';
 
     protected $fillable = [
-        'class_year_id',
         'name',
         'description',
-        'type',
-        'is_active',
-        'display_order',
+        'type',   // 'expense' (fixed untuk pengeluaran)
     ];
 
-    protected $casts = [
-        'is_active'     => 'boolean',
-        'display_order' => 'integer',
-    ];
-
-    public function classYear()
-    {
-        return $this->belongsTo(ClassYear::class);
-    }
+    // nggak ada casts is_active / display_order lagi
 
     public function expenseRequests()
     {

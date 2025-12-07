@@ -5,28 +5,23 @@ namespace App\Http\Controllers;
 use App\Models\Category;
 use App\Models\ClassYear;
 use App\Models\ExpenseRequest;
-use App\Models\Attachment;
+use App\Models\CashExpense;
+use App\Models\CashPayment;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
-use App\Models\CashExpense;
-use App\Models\CashPayment;
+
 class ExpenseRequestController extends Controller
 {
     /**
      * Ambil tahun ajaran aktif.
-     * Sesuaikan dengan cara kamu kalau sudah punya helper sendiri.
      */
     protected function getActiveClassYear(): ClassYear
     {
         return ClassYear::where('status', 'active')->firstOrFail();
     }
 
-    /**
-     * Daftar pengajuan pengeluaran.
-     * - Bendahara: lihat hanya pengajuan miliknya.
-     * - Guru: lihat semua pengajuan di tahun ajaran aktif.
-     */
     public function index(Request $request)
     {
         $classYear = $this->getActiveClassYear();
@@ -37,13 +32,8 @@ class ExpenseRequestController extends Controller
             ->orderByDesc('request_date')
             ->orderByDesc('id');
 
-        // Filter by role
-        if ($user->hasRole('bendahara') && !$user->hasRole('guru')) {
-            $query->where('requested_by', $user->id);
-        }
-
-        // Filter by status (optional: ?status=pending/approved/rejected)
-        if ($request->filled('status') && in_array($request->status, ['pending', 'approved', 'rejected'])) {
+        // Filter by status (?status=pending/approved/rejected)
+        if ($request->filled('status') && in_array($request->status, ['pending', 'approved', 'rejected'], true)) {
             $query->where('status', $request->status);
         }
 
@@ -57,16 +47,12 @@ class ExpenseRequestController extends Controller
      */
     public function create()
     {
+        // View kadang butuh info tahun aktif
         $classYear = $this->getActiveClassYear();
 
-        // Ambil kategori pengeluaran yg aktif
-        $categories = Category::where(function ($q) use ($classYear) {
-                $q->whereNull('class_year_id')
-                  ->orWhere('class_year_id', $classYear->id);
-            })
+        // Kategori pengeluaran GLOBAL (tidak terikat tahun, tidak pakai is_active/display_order)
+        $categories = Category::query()
             ->where('type', 'expense')
-            ->where('is_active', true)
-            ->orderBy('display_order')
             ->orderBy('name')
             ->get();
 
@@ -84,7 +70,9 @@ class ExpenseRequestController extends Controller
      */
     public function store(Request $request)
     {
+       
         $classYear = $this->getActiveClassYear();
+
         $user      = Auth::user();
 
         // Validasi
@@ -108,7 +96,7 @@ class ExpenseRequestController extends Controller
             'nota.max'              => 'Ukuran nota maksimal 2MB.',
         ]);
 
-        // Buat record expense_requests
+        // Buat record pengajuan
         $expenseRequest = ExpenseRequest::create([
             'class_year_id' => $classYear->id,
             'request_date'  => $validated['request_date'],
@@ -121,19 +109,31 @@ class ExpenseRequestController extends Controller
 
         // Simpan nota (jika ada)
         if ($request->hasFile('nota')) {
-            $file     = $request->file('nota');
-            $path     = $file->store('attachments/expense_requests', 'public');
-            $mime     = $file->getMimeType();
-            $size     = $file->getSize();
+            $file = $request->file('nota');
+            $path = $file->store('attachments/expense_requests', 'public');
 
             $expenseRequest->attachments()->create([
                 'file_path' => $path,
-                'mime'      => $mime,
-                'size'      => $size,
+                'mime'      => $file->getMimeType(),
+                'size'      => $file->getSize(),
             ]);
         }
 
-        // (Opsional) tulis activity log di Task 13
+        // 🔹 Activity log: bendahara mengajukan pengeluaran baru
+        ActivityLog::record(
+            'expense_request.created',
+            $expenseRequest,
+            $classYear->id,
+            null,
+            [
+                'message'       => 'Pengajuan pengeluaran dibuat',
+                'amount'        => $expenseRequest->amount,
+                'category_id'   => $expenseRequest->category_id,
+                'requested_by'  => $user->id,
+                'request_date'  => $expenseRequest->request_date,
+                'status'        => $expenseRequest->status,
+            ]
+        );
 
         return redirect()
             ->route('expense-requests.index')
@@ -141,40 +141,32 @@ class ExpenseRequestController extends Controller
     }
 
     /**
-     * Detail pengajuan.
+     * Detail pengajuan (guru & bendahara).
      */
-     public function show(ExpenseRequest $expenseRequest)
-{
-    $classYear = $this->getActiveClassYear();
-    $user      = Auth::user();
+    public function show(ExpenseRequest $expenseRequest)
+    {
+        $classYear = $this->getActiveClassYear();
+        $user      = Auth::user();
 
-    if ($expenseRequest->class_year_id !== $classYear->id) {
-        abort(404);
-    }
-
-    // Bendahara cuma boleh lihat pengajuan miliknya
-    if ($user->hasRole('bendahara') && !$user->hasRole('guru')) {
-        if ($expenseRequest->requested_by !== $user->id) {
-            abort(403);
+        // Pastikan belong ke tahun aktif
+        if ($expenseRequest->class_year_id !== $classYear->id) {
+            abort(404);
         }
+
+        $expenseRequest->load(['category', 'requester', 'approver', 'attachments']);
+
+        // Hitung saldo kas saat ini (untuk panel ACC guru)
+        $totalIn  = CashPayment::where('class_year_id', $classYear->id)->sum('amount');
+        $totalOut = CashExpense::where('class_year_id', $classYear->id)->sum('amount');
+        $currentBalance = $totalIn - $totalOut;
+
+        return view('expense_requests.show', compact('expenseRequest', 'classYear', 'currentBalance'));
     }
-
-    $expenseRequest->load(['category', 'requester', 'approver', 'attachments']);
-
-    // Hitung saldo kas sekarang (biar guru bisa lihat sebelum ACC)
-    $totalIn  = CashPayment::where('class_year_id', $classYear->id)->sum('amount');
-    $totalOut = CashExpense::where('class_year_id', $classYear->id)->sum('amount');
-    $currentBalance = $totalIn - $totalOut;
-
-    return view('expense_requests.show', compact('expenseRequest', 'classYear', 'currentBalance'));
-}
-
 
     /**
      * Hapus (batalkan) pengajuan.
      * - Hanya boleh jika status masih pending.
      * - Bendahara hanya boleh hapus pengajuan miliknya.
-     * - Guru boleh menghapus jika diinginkan (opsional).
      */
     public function destroy(ExpenseRequest $expenseRequest)
     {
@@ -191,12 +183,21 @@ class ExpenseRequestController extends Controller
                 ->with('error', 'Pengajuan yang sudah diproses tidak dapat dibatalkan.');
         }
 
-        // Bendahara hanya boleh hapus pengajuan miliknya
+        // Bendahara hanya boleh hapus pengajuan miliknya (kalau bukan guru)
         if ($user->hasRole('bendahara') && !$user->hasRole('guru')) {
             if ($expenseRequest->requested_by !== $user->id) {
                 abort(403);
             }
         }
+
+        // 🔹 Simpan snapshot sebelum dihapus (supaya masih ada jejaknya)
+        $before = [
+            'amount'       => $expenseRequest->amount,
+            'category_id'  => $expenseRequest->category_id,
+            'status'       => $expenseRequest->status,
+            'requested_by' => $expenseRequest->requested_by,
+            'request_date' => $expenseRequest->request_date,
+        ];
 
         // Hapus file nota kalau ada
         foreach ($expenseRequest->attachments as $attachment) {
@@ -208,43 +209,74 @@ class ExpenseRequestController extends Controller
 
         $expenseRequest->delete();
 
+        // 🔹 Activity log: pengajuan dibatalkan
+        ActivityLog::record(
+            'expense_request.deleted',
+            $expenseRequest,
+            $classYear->id,
+            $before,
+            [
+                'message' => 'Pengajuan pengeluaran dibatalkan',
+            ]
+        );
+
         return redirect()
             ->route('expense-requests.index')
             ->with('success', 'Pengajuan pengeluaran berhasil dibatalkan.');
     }
 
     /**
- * Guru menolak pengajuan pengeluaran.
- */
-public function reject(Request $request, ExpenseRequest $expenseRequest)
-{
-    $user = Auth::user();
+     * Guru menolak pengajuan pengeluaran.
+     */
+    public function reject(Request $request, ExpenseRequest $expenseRequest)
+    {
+        $user = Auth::user();
 
-    if ($expenseRequest->status !== 'pending') {
+        if ($expenseRequest->status !== 'pending') {
+            return redirect()
+                ->route('expense-requests.show', $expenseRequest)
+                ->with('error', 'Pengajuan ini sudah diproses sebelumnya.');
+        }
+
+        $validated = $request->validate([
+            'reject_reason' => ['required', 'string', 'max:1000'],
+        ], [
+            'reject_reason.required' => 'Alasan penolakan wajib diisi.',
+            'reject_reason.max'      => 'Alasan penolakan maksimal 1000 karakter.',
+        ]);
+
+        // 🔹 Snapshot sebelum update (status masih pending)
+        $before = [
+            'status'        => $expenseRequest->status,
+            'reject_reason' => $expenseRequest->reject_reason,
+        ];
+
+        $expenseRequest->update([
+            'status'        => 'rejected',
+            'approved_by'   => $user->id,   // yang menolak tetap dicatat
+            'approved_at'   => now(),
+            'reject_reason' => $validated['reject_reason'],
+        ]);
+
+        $expenseRequest->refresh();
+
+        // 🔹 Activity log: pengajuan ditolak
+        ActivityLog::record(
+            'expense_request.rejected',
+            $expenseRequest,
+            $expenseRequest->class_year_id,
+            $before,
+            [
+                'message'       => 'Pengajuan pengeluaran ditolak',
+                'status'        => $expenseRequest->status,
+                'reject_reason' => $expenseRequest->reject_reason,
+                'approved_by'   => $user->id,
+                'approved_at'   => $expenseRequest->approved_at,
+            ]
+        );
+
         return redirect()
             ->route('expense-requests.show', $expenseRequest)
-            ->with('error', 'Pengajuan ini sudah diproses sebelumnya.');
+            ->with('success', 'Pengajuan pengeluaran telah ditolak.');
     }
-
-    $validated = $request->validate([
-        'reject_reason' => ['required', 'string', 'max:1000'],
-    ], [
-        'reject_reason.required' => 'Alasan penolakan wajib diisi.',
-        'reject_reason.max'      => 'Alasan penolakan maksimal 1000 karakter.',
-    ]);
-
-    $expenseRequest->update([
-        'status'        => 'rejected',
-        'approved_by'   => $user->id,    // yang menolak tetap dicatat di sini
-        'approved_at'   => now(),
-        'reject_reason' => $validated['reject_reason'],
-    ]);
-
-    // TODO: Activity log
-
-    return redirect()
-        ->route('expense-requests.show', $expenseRequest)
-        ->with('success', 'Pengajuan pengeluaran telah ditolak.');
-}
-
 }
