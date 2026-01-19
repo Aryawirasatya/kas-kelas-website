@@ -13,6 +13,7 @@ use App\Http\Controllers\UnpaidReasonController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\ExpenseRequestController;
 use App\Http\Controllers\CashExpenseController;
+use App\Http\Controllers\Auth\GoogleController;
 
 // ======================================================================
 // Redirect root → dashboard
@@ -151,6 +152,8 @@ Route::middleware(['auth', 'role:siswa'])->group(function () {
     Route::get('/reports/export/personal/pdf', [ReportController::class, 'exportPersonalPdf'])
         ->name('reports.export.personal.pdf');
 });
+Route::get('/auth/google/redirect', [GoogleController::class, 'redirect'])->name('google.redirect');
+Route::get('/auth/google/callback', [GoogleController::class, 'callback'])->name('google.callback');
 
 // ======================================================================
 // Auth routes (Breeze / Fortify / dll.)
