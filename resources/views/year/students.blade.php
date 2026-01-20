@@ -132,10 +132,22 @@
                                         <label class="form-label">Email</label>
                                         <input type="email" name="email" class="form-control rounded-pill" required>
                                     </div>
+
+                                    {{-- NISN (WAJIB 10 DIGIT) --}}
                                     <div class="col-md-6">
                                         <label class="form-label">NISN</label>
-                                        <input name="nisn" class="form-control rounded-pill" placeholder="Nomor Induk Siswa Nasional">
+                                        <input
+                                            name="nisn"
+                                            class="form-control rounded-pill"
+                                            placeholder="10 digit NISN"
+                                            inputmode="numeric"
+                                            pattern="[0-9]{10}"
+                                            minlength="10"
+                                            maxlength="10"
+                                            required
+                                        >
                                     </div>
+
                                     <div class="col-md-6">
                                         <label class="form-label">NIS (opsional)</label>
                                         <input name="nis" class="form-control rounded-pill" placeholder="Nomor Induk Sekolah">
@@ -514,13 +526,31 @@
                         @error('email')<div class="text-danger mt-1">{{ $message }}</div>@enderror
                     </div>
 
-                    {{-- NIS & Gender --}}
+                    {{-- NISN + NIS --}}
+                    <div class="col-md-6">
+                        <label for="ed_nisn" class="form-label mb-1">NISN</label>
+                        <input
+                            id="ed_nisn"
+                            type="text"
+                            name="nisn"
+                            class="form-control rounded-pill"
+                            placeholder="10 digit NISN"
+                            inputmode="numeric"
+                            pattern="[0-9]{10}"
+                            minlength="10"
+                            maxlength="10"
+                            required
+                        >
+                        @error('nisn')<div class="text-danger mt-1">{{ $message }}</div>@enderror
+                    </div>
+
                     <div class="col-md-6">
                         <label for="ed_nis" class="form-label mb-1">NIS (opsional)</label>
                         <input id="ed_nis" type="text" name="nis" class="form-control rounded-pill"
                                inputmode="numeric" pattern="[0-9]*" maxlength="12" placeholder="Nomor Induk Sekolah">
                         @error('nis')<div class="text-danger mt-1">{{ $message }}</div>@enderror
                     </div>
+
                     <div class="col-md-6">
                         <label for="ed_gender" class="form-label mb-1">Gender</label>
                         <select id="ed_gender" name="gender" class="form-select rounded-pill">
@@ -633,9 +663,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ===================== Modal EDIT siswa (populate + password opsional) =====================
   const editForm        = $('#editForm');
-  const editPwd         = editForm?.querySelector('#editStudentPassword');     // opsional (kalau modal sudah ditambah field password)
-  const toggleEditPwd   = editForm?.querySelector('#toggleEditPwd');           // opsional
-  const editSubmitBtn   = editForm?.querySelector('#editFormSubmitBtn');       // opsional
+  const editPwd         = editForm?.querySelector('#editStudentPassword');
+  const toggleEditPwd   = editForm?.querySelector('#toggleEditPwd');
+  const editSubmitBtn   = editForm?.querySelector('#editFormSubmitBtn');
 
   $$('.btn-edit').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -644,25 +674,27 @@ document.addEventListener('DOMContentLoaded', () => {
       const name   = tr.dataset.name   || '';
       const email  = tr.dataset.email  || '';
       const nis    = tr.dataset.nis    || '';
+      const nisn   = tr.dataset.nisn   || '';
       const gender = tr.dataset.gender || '';
 
       // set action (replace placeholder with id)
       editForm.action = "{{ route('year.enrollment.update', [$year, '___ID___']) }}".replace('___ID___', id);
 
-      // populate (jangan isi password apapun)
+      // populate
       editForm.querySelector('[name=name]').value   = name;
       editForm.querySelector('[name=email]').value  = email;
       editForm.querySelector('[name=nis]').value    = nis;
+      editForm.querySelector('[name=nisn]').value   = nisn;
       editForm.querySelector('[name=gender]').value = gender;
 
-      // reset state password (jika elemen ada)
+      // reset state password
       if (editPwd)  { editPwd.value = ''; editPwd.type = 'password'; }
       if (toggleEditPwd) toggleEditPwd.textContent = 'Tampilkan';
       if (editSubmitBtn) { editSubmitBtn.disabled = false; editSubmitBtn.textContent = 'Simpan Perubahan'; }
     });
   });
 
-  // toggle show/hide password (aman jika elemen tidak ada)
+  // toggle show/hide password
   toggleEditPwd?.addEventListener('click', () => {
     if (!editPwd) return;
     const isPwd = editPwd.type === 'password';
@@ -904,7 +936,7 @@ document.addEventListener('DOMContentLoaded', () => {
     border-color:var(--soft-primary, #2563eb);
 }
 .search-soft .form-control{
-    border-radius:0; /* biar silinder halus */
+    border-radius:0;
 }
 .search-soft .form-control:focus{ box-shadow:none; }
 .search-soft .input-group-text{
@@ -912,10 +944,10 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 .search-soft .form-select{
     background-color:transparent;
-    background-image:none; /* hilangkan caret default bootstrap, lebih clean */
+    background-image:none;
 }
 .form-floating-select{
-    min-width: 190px; /* biar nggak terlalu sempit */
+    min-width: 190px;
 }
 .vr-soft{
     display:inline-block; width:1px; height:20px; background:#e5e9f0;
@@ -923,7 +955,6 @@ document.addEventListener('DOMContentLoaded', () => {
 @media (max-width: 576px){
     .form-floating-select{ min-width: 160px; }
 }
-
 
 /* Konsistensi jarak label */
 .form-label.mb-1 { margin-bottom: .35rem !important; }
@@ -973,15 +1004,11 @@ document.addEventListener('DOMContentLoaded', () => {
     box-shadow: 0 0 0 .2rem rgba(37,99,235,.20) !important;
 }
 
-
-
     /* Sticky hanya saat draft supaya tidak bikin gap jika isinya pendek */
     @media (max-width: 576px){
         .card-soft-body{ padding:1rem; }
     }
 
     .picker-item.disabled { opacity:.55; pointer-events:none; }
-
-    
 </style>
 @endsection

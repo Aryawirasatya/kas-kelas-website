@@ -115,23 +115,36 @@
           <label class="form-label">
             Nominal Kas per Minggu (Rp) <span class="text-danger">*</span>
           </label>
+
           <div class="input-group">
             <span class="input-group-text rounded-start-pill">Rp</span>
+
+            {{-- INPUT TAMPILAN (yang terlihat user, format 5.000) --}}
             <input
-              type="number"
-              name="kas_nominal"
+              type="text"
+              id="kas_nominal_display"
               class="form-control rounded-end-pill @error('kas_nominal') is-invalid @enderror"
               value="{{ old('kas_nominal', $year->setting?->kas_nominal ?? '') }}"
-              min="1000"
-              step="100"
+              inputmode="numeric"
+              autocomplete="off"
               required
             >
+
+            {{-- INPUT ASLI (yang dikirim ke backend, angka murni 5000) --}}
+            <input
+              type="hidden"
+              name="kas_nominal"
+              id="kas_nominal"
+              value="{{ old('kas_nominal', $year->setting?->kas_nominal ?? '') }}"
+            >
+
             @error('kas_nominal')
               <div class="invalid-feedback">{{ $message }}</div>
             @enderror
           </div>
+
           <div class="form-text">
-            Minimal sekitar Rp 1.000. Contoh: <code>5000</code> untuk kas 5.000 per minggu.
+            Minimal sekitar Rp 1.000. Contoh: <code>5.000</code> untuk kas 5.000 per minggu.
           </div>
         </div>
 
@@ -311,4 +324,36 @@
     .card-soft-body{ padding:1rem; }
   }
 </style>
+
+{{-- ===== JS Format Rupiah (5000 => 5.000) ===== --}}
+<script>
+  function onlyDigits(str) {
+    return (str || '').toString().replace(/\D/g, '');
+  }
+
+  function formatRupiah(angka) {
+    angka = onlyDigits(angka);
+    if (!angka) return '';
+    return angka.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    const display = document.getElementById('kas_nominal_display');
+    const hidden  = document.getElementById('kas_nominal');
+
+    // format awal dari DB/old()
+    display.value = formatRupiah(display.value);
+    hidden.value  = onlyDigits(hidden.value || display.value);
+
+    display.addEventListener('input', function () {
+      const raw = onlyDigits(display.value);
+
+      // simpan angka asli buat backend
+      hidden.value = raw;
+
+      // tampilkan yang sudah diformat
+      display.value = formatRupiah(raw);
+    });
+  });
+</script>
 @endsection
