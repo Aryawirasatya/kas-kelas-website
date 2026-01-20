@@ -151,7 +151,7 @@
         {{-- Hari bayar (opsional, kalau pakai pay_day_hint di class_settings) --}}
         <div class="mb-3">
           <label class="form-label">
-            Hari Bayar (opsional)
+           rekomandasi mulai Hari Bayar (opsional)
           </label>
           @php
             $sel = old('pay_day_hint', $year->setting?->pay_day_hint);
@@ -174,7 +174,7 @@
           <div class="col-12 col-md">
             <button class="btn btn-primary rounded-pill w-100">
               <i class="mdi mdi-content-save-outline me-1"></i>
-              Simpan Nominal
+              Simpan
             </button>
           </div>
 

@@ -102,6 +102,17 @@
                             <div class="card-soft-body">
                                 <h6 class="mb-3">Import Siswa (CSV/EXCELL)</h6>
                                 <form method="POST" action="{{ route('year.students.import', $year) }}" enctype="multipart/form-data" class="small">
+                                    <div class="d-flex flex-wrap gap-2 mb-3">
+                                        <a href="{{ route('year.students.template', $year) }}"
+                                            class="btn btn-sm btn-outline-primary rounded-pill">
+                                            Download Template Excel
+                                        </a>
+
+                                        <a href="{{ route('year.students.template.csv', $year) }}"
+                                            class="btn btn-sm btn-outline-secondary rounded-pill">
+                                            Download Template CSV
+                                        </a>
+                                        </div>
                                     @csrf
                                     <div class="mb-3">
                                       <input type="file" name="csv" class="form-control" accept=".xlsx,.xls,.csv" required>

@@ -16,7 +16,7 @@ use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\StudentsImport;
 use App\Http\Requests\StoreClassYearRequest;
 use App\Http\Requests\UpdateClassSettingRequest;
-
+use App\Exports\StudentsTemplateExport;
 class YearController extends Controller
 {
     // ====== INDEX: daftar tahun + tahun aktif ======
@@ -259,16 +259,18 @@ class YearController extends Controller
 
         $setting       = $year->setting;
         $beforeSetting = $setting
-            ? $setting->only(['id', 'kas_nominal', 'periode'])
+            ? $setting->only(['id', 'kas_nominal', 'periode','pay_day_hint'])
             : null;
 
         $year->setting()->update([
             'kas_nominal' => $data['kas_nominal'],
+            'pay_day_hint'  => $data['pay_day_hint'] ?? null,
+
         ]);
 
         $setting->refresh();
 
-        $afterSetting = $setting->only(['id', 'kas_nominal', 'periode']);
+        $afterSetting = $setting->only(['id', 'kas_nominal', 'periode','pay_day_hint']);
 
         // LOG: update nominal kas
         try {
@@ -1000,4 +1002,36 @@ class YearController extends Controller
 
         return back()->with('success', 'Siswa dihapus dari tahun ini.');
     }
+
+    public function downloadTemplate(ClassYear $year)
+{
+    return Excel::download(new StudentsTemplateExport, 'template_import_siswa.xlsx');
+}
+
+public function downloadTemplateCsv(ClassYear $year)
+{
+    $filename = "template_import_siswa.csv";
+
+    $headers = [
+        "Content-Type" => "text/csv",
+        "Content-Disposition" => "attachment; filename=$filename",
+    ];
+
+    $rows = [
+        ['name','email','nis','nisn','gender','password','active'],
+        ['Ahmad 01','siswa01@smkn1cjr.sch.id','2025001','009870001','L','p@ss01word',1],
+        ['Nisa 02','siswa02@smkn1cjr.sch.id','2025002','009870002','P','p@ss02word',1],
+    ];
+
+    $callback = function () use ($rows) {
+        $file = fopen('php://output', 'w');
+        foreach ($rows as $row) {
+            fputcsv($file, $row);
+        }
+        fclose($file);
+    };
+
+    return response()->streamDownload($callback, $filename, $headers);
+}
+
 }

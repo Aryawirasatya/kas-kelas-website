@@ -286,6 +286,8 @@
                             <th class="text-center">% Tercapai</th>
                             <th class="text-center">Sudah Lunas</th>
                             <th class="text-center">Belum Lunas</th>
+                            <th class="text-end">Aksi</th>
+
                         </tr>
                     </thead>
                     <tbody>
@@ -317,10 +319,25 @@
                                 <td class="text-center">
                                     {{ $p['unpaid_students_count'] ?? 0 }} siswa
                                 </td>
+                                <td class="text-end">
+                                    @if (in_array($role, ['guru', 'bendahara']))
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-primary btn-arrears-detail"
+                                            data-period-id="{{ $p['id'] ?? '' }}"
+                                            data-period-label="{{ $p['label'] ?? '' }}"
+                                        >
+                                            Detail Tunggakan
+                                        </button>
+                                    @else
+                                        <span class="text-muted small">—</span>
+                                    @endif
+                                </td>
+
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="8" class="text-center text-muted">
+                                <td colspan="9" class="text-center text-muted">
                                     Belum ada periode kas untuk tahun ajaran ini.
                                 </td>
                             </tr>
@@ -420,11 +437,342 @@
             </div>
         </div>
     @endif
+{{-- MODAL DETAIL TUNGGAKAN --}}
+{{-- MODAL DETAIL TUNGGAKAN (Modern) --}}
+<div class="modal fade" id="arrearsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content arrears-modal">
+
+      {{-- Header --}}
+      <div class="modal-header border-0 pb-0">
+        <div class="w-100">
+          <div class="d-flex align-items-start justify-content-between gap-3">
+            <div>
+              <div class="text-muted small mb-1">Detail Tunggakan</div>
+              <h5 class="modal-title fw-semibold mb-0">
+                <span id="arrearsModalTitle">Periode</span>
+              </h5>
+              <div class="text-muted small mt-1" id="arrearsModalSubTitle">
+                Menampilkan siswa yang belum lunas pada periode ini.
+              </div>
+            </div>
+
+            <button type="button" class="btn-close mt-1" data-bs-dismiss="modal" aria-label="Tutup"></button>
+          </div>
+
+          {{-- Meta info --}}
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <span class="badge rounded-pill text-bg-light border">
+              Nominal/minggu: <span class="fw-semibold">Rp <span id="arrearsNominal">0</span></span>
+            </span>
+            <span class="badge rounded-pill text-bg-danger">
+              Total nunggak: <span class="fw-semibold" id="arrearsCount">0</span> siswa
+            </span>
+            <span class="badge rounded-pill text-bg-secondary">
+              Filter: periode ini saja
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {{-- Body --}}
+      <div class="modal-body pt-3">
+
+        {{-- Controls --}}
+        <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-3">
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <div class="input-group input-group-sm arrears-search">
+              <span class="input-group-text bg-white border-end-0">
+                <i class="mdi mdi-magnify"></i>
+              </span>
+              <input type="text" class="form-control border-start-0"
+                     id="arrearsSearchInput"
+                     placeholder="Cari nama / NIS / NISN...">
+            </div>
+
+            <select class="form-select form-select-sm w-auto" id="arrearsSortSelect">
+              <option value="weeks_desc" selected>Urutkan: Nunggak terbanyak</option>
+              <option value="weeks_asc">Urutkan: Nunggak tersedikit</option>
+              <option value="name_asc">Urutkan: Nama A-Z</option>
+              <option value="name_desc">Urutkan: Nama Z-A</option>
+            </select>
+          </div>
+
+          <div class="small text-muted">
+            Klik baris untuk lihat detail minggu nunggak.
+          </div>
+        </div>
+
+        {{-- Loading --}}
+        <div id="arrearsModalLoading" class="arrears-loading">
+          <div class="skeleton-line w-50"></div>
+          <div class="skeleton-line w-75"></div>
+          <div class="skeleton-table mt-3">
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+          </div>
+        </div>
+
+        {{-- Empty --}}
+        <div id="arrearsModalEmpty" class="text-muted text-center py-5" style="display:none;">
+          <div class="fs-1 mb-2">🎉</div>
+          <div class="fw-semibold">Tidak ada tunggakan</div>
+          <div class="small">Semua siswa lunas pada periode ini.</div>
+        </div>
+
+        {{-- Content --}}
+        <div id="arrearsModalContent" style="display:none;">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle arrears-table mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:28px;"></th>
+                  <th>Nama</th>
+                  <th style="width:120px;">NIS</th>
+                  <th style="width:140px;">NISN</th>
+                  <th class="text-end" style="width:140px;">Bayar</th>
+                  <th class="text-end" style="width:140px;">Kurang</th>
+                  <th class="text-center" style="width:120px;">Nunggak</th>
+                  <th style="width:220px;">Alasan (Periode ini)</th>
+                </tr>
+              </thead>
+              <tbody id="arrearsTableBody"></tbody>
+            </table>
+          </div>
+
+          <div class="small text-muted mt-3">
+            * “Nunggak” dihitung dari minggu 1 sampai minggu periode ini.
+          </div>
+        </div>
+      </div>
+
+      {{-- Footer --}}
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-light rounded-pill" data-bs-dismiss="modal">
+          Tutup
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 
 </div>
 @endsection
 
 @push('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const modalEl = document.getElementById('arrearsModal');
+  if (!modalEl) return;
+
+  // pastikan bootstrap modal tersedia
+  if (typeof bootstrap === 'undefined') {
+    console.error('Bootstrap JS belum ter-load. Modal tidak bisa jalan.');
+    return;
+  }
+
+  const modal = new bootstrap.Modal(modalEl);
+
+  const loadingEl = document.getElementById('arrearsModalLoading');
+  const contentEl = document.getElementById('arrearsModalContent');
+  const emptyEl   = document.getElementById('arrearsModalEmpty');
+
+  const titleEl   = document.getElementById('arrearsModalTitle');
+  const nominalEl = document.getElementById('arrearsNominal');
+  const countEl   = document.getElementById('arrearsCount');
+  const tbodyEl   = document.getElementById('arrearsTableBody');
+
+  const searchInput = document.getElementById('arrearsSearchInput');
+  const sortSelect  = document.getElementById('arrearsSortSelect');
+
+  let cachedRows = [];
+
+  function rupiah(n) {
+    n = parseInt(n || 0);
+    return n.toLocaleString('id-ID');
+  }
+
+  function escapeHtml(str) {
+    return (str ?? '').toString()
+      .replaceAll('&','&amp;')
+      .replaceAll('<','&lt;')
+      .replaceAll('>','&gt;')
+      .replaceAll('"','&quot;')
+      .replaceAll("'","&#039;");
+  }
+
+  function renderTable(rows) {
+    tbodyEl.innerHTML = '';
+
+    if (!rows || rows.length === 0) {
+      contentEl.style.display = 'none';
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    rows.forEach((row, idx) => {
+      const unpaidWeeks = row.unpaid_weeks || [];
+
+      const detailHtml = unpaidWeeks.map(w => {
+        return `
+          <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
+            <span class="arrears-chip">
+              Minggu <strong>${escapeHtml(w.week_no)}</strong>
+            </span>
+            <span class="arrears-chip arrears-badge-danger">
+              Kurang Rp ${rupiah(w.arrears)}
+            </span>
+            <span class="arrears-chip">
+              Bayar Rp ${rupiah(w.paid)}
+            </span>
+          </div>
+          <div class="small text-muted mb-2">
+            Alasan: ${w.reason ? escapeHtml(w.reason) : '-'}
+          </div>
+        `;
+      }).join('');
+
+      const tr = document.createElement('tr');
+      tr.classList.add('arrears-row');
+      tr.dataset.idx = idx;
+
+      tr.innerHTML = `
+        <td class="text-muted">${idx + 1}</td>
+        <td>
+          <div class="fw-semibold">${escapeHtml(row.name)}</div>
+          <div class="text-muted small">${escapeHtml(row.email ?? '')}</div>
+
+          <div class="arrears-detail" id="arrearsDetail-${idx}">
+            <div class="card mt-2">
+              <div class="card-body">
+                <div class="fw-semibold mb-2">Detail Minggu Nunggak</div>
+                ${detailHtml || '<div class="text-muted small">Tidak ada detail.</div>'}
+              </div>
+            </div>
+          </div>
+        </td>
+        <td>${escapeHtml(row.nis ?? '-')}</td>
+        <td>${escapeHtml(row.nisn ?? '-')}</td>
+        <td class="text-end">Rp ${rupiah(row.paid)}</td>
+        <td class="text-end text-danger fw-semibold">Rp ${rupiah(row.arrears)}</td>
+        <td class="text-center">
+          <span class="arrears-chip arrears-badge-danger">
+            ${escapeHtml(row.unpaid_weeks_count)}
+          </span>
+        </td>
+        <td class="arrears-reason">
+          ${row.reason ? escapeHtml(row.reason) : '<small>-</small>'}
+        </td>
+      `;
+
+      // klik baris untuk toggle detail
+      tr.addEventListener('click', () => {
+        const detail = document.getElementById(`arrearsDetail-${idx}`);
+        if (!detail) return;
+
+        // close semua dulu biar rapi
+        document.querySelectorAll('.arrears-detail').forEach(el => {
+          if (el !== detail) el.style.display = 'none';
+        });
+
+        detail.style.display = (detail.style.display === 'none' || detail.style.display === '')
+          ? 'block'
+          : 'none';
+      });
+
+      tbodyEl.appendChild(tr);
+    });
+
+    emptyEl.style.display = 'none';
+    contentEl.style.display = 'block';
+  }
+
+  function applySearchAndSort() {
+    const q = (searchInput?.value ?? '').toLowerCase().trim();
+    const sort = sortSelect?.value ?? 'weeks_desc';
+
+    let rows = [...cachedRows];
+
+    // search
+    if (q) {
+      rows = rows.filter(r => {
+        const name = (r.name ?? '').toLowerCase();
+        const nis  = (r.nis ?? '').toString().toLowerCase();
+        const nisn = (r.nisn ?? '').toString().toLowerCase();
+        return name.includes(q) || nis.includes(q) || nisn.includes(q);
+      });
+    }
+
+    // sort
+    rows.sort((a, b) => {
+      if (sort === 'weeks_desc') return (b.unpaid_weeks_count ?? 0) - (a.unpaid_weeks_count ?? 0);
+      if (sort === 'weeks_asc')  return (a.unpaid_weeks_count ?? 0) - (b.unpaid_weeks_count ?? 0);
+      if (sort === 'name_asc')   return (a.name ?? '').localeCompare(b.name ?? '');
+      if (sort === 'name_desc')  return (b.name ?? '').localeCompare(a.name ?? '');
+      return 0;
+    });
+
+    renderTable(rows);
+  }
+
+  // bind search + sort
+  if (searchInput) searchInput.addEventListener('input', applySearchAndSort);
+  if (sortSelect) sortSelect.addEventListener('change', applySearchAndSort);
+
+  // tombol detail tunggakan di tabel periode
+  document.querySelectorAll('.btn-arrears-detail').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const periodId = btn.dataset.periodId;
+      const periodLabel = btn.dataset.periodLabel || ('Periode #' + periodId);
+
+      titleEl.textContent = periodLabel;
+
+      loadingEl.style.display = 'block';
+      contentEl.style.display = 'none';
+      emptyEl.style.display = 'none';
+      tbodyEl.innerHTML = '';
+      cachedRows = [];
+      if (searchInput) searchInput.value = '';
+
+      modal.show();
+
+      try {
+        const url = `{{ url('/reports/period') }}/${periodId}/arrears`;
+        const res = await fetch(url, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        const data = await res.json();
+
+        loadingEl.style.display = 'none';
+
+        if (!data.ok) {
+          emptyEl.style.display = 'block';
+          emptyEl.textContent = data.message || 'Gagal memuat data.';
+          return;
+        }
+
+        nominalEl.textContent = rupiah(data.kas_nominal);
+        countEl.textContent = data.count ?? 0;
+
+        cachedRows = data.rows || [];
+
+        applySearchAndSort();
+
+      } catch (err) {
+        loadingEl.style.display = 'none';
+        emptyEl.style.display = 'block';
+        emptyEl.textContent = 'Error: ' + err.message;
+      }
+    });
+  });
+});
+</script>
+
+ 
     @if($chart && !empty($chart['labels'] ?? []))
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <script>
@@ -465,5 +813,111 @@
                 });
             });
         </script>
+
     @endif
+
 @endpush
+<style>
+  .arrears-modal{
+    border-radius: 1.25rem;
+    box-shadow: 0 24px 70px rgba(0,0,0,.35);
+    overflow: hidden;
+  }
+
+  .arrears-search{
+    min-width: 280px;
+    max-width: 360px;
+  }
+
+  .arrears-table thead th{
+    font-size: .78rem;
+    color: #6b7280;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+
+  .arrears-table tbody tr{
+    cursor: pointer;
+    transition: all .12s ease;
+  }
+  .arrears-table tbody tr:hover{
+    background: rgba(37,99,235,.05);
+  }
+
+  .arrears-chip{
+    display:inline-flex;
+    align-items:center;
+    gap:.35rem;
+    padding:.25rem .55rem;
+    border-radius: 999px;
+    font-size: .78rem;
+    border: 1px solid #e5e7eb;
+    background:#fff;
+    color:#111827;
+    white-space: nowrap;
+  }
+
+  .arrears-badge-danger{
+    background: rgba(239,68,68,.1);
+    border: 1px solid rgba(239,68,68,.25);
+    color: #b91c1c;
+  }
+
+  .arrears-badge-ok{
+    background: rgba(34,197,94,.1);
+    border: 1px solid rgba(34,197,94,.25);
+    color: #15803d;
+  }
+
+  .arrears-reason{
+    font-size: .85rem;
+    color:#111827;
+  }
+  .arrears-reason small{
+    color:#6b7280;
+  }
+
+  /* Accordion detail */
+  .arrears-detail{
+    margin-top: .35rem;
+    display:none;
+  }
+  .arrears-detail .card{
+    border-radius: 1rem;
+    border: 1px solid #e5e7eb;
+    overflow:hidden;
+  }
+  .arrears-detail .card-body{
+    padding: .75rem .85rem;
+    background:#fafafa;
+  }
+
+  /* Skeleton */
+  .arrears-loading .skeleton-line{
+    height: 12px;
+    border-radius: 999px;
+    background: #e5e7eb;
+    margin-bottom: 10px;
+    animation: pulse 1.1s infinite ease-in-out;
+  }
+  .arrears-loading .skeleton-table{
+    border: 1px solid #e5e7eb;
+    border-radius: 1rem;
+    padding: .75rem;
+    background:#fff;
+  }
+  .arrears-loading .skeleton-row{
+    height: 36px;
+    border-radius: .75rem;
+    background: #e5e7eb;
+    margin-bottom: 10px;
+    animation: pulse 1.1s infinite ease-in-out;
+  }
+
+  @keyframes pulse{
+    0%{ opacity:.55 }
+    50%{ opacity:1 }
+    100%{ opacity:.55 }
+  }
+</style>

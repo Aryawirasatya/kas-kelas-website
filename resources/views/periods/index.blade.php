@@ -2,11 +2,23 @@
 
 @section('content')
 <div class="container py-4" style="max-width: 1100px;">
-  @php
-    use Illuminate\Support\Carbon;
-    Carbon::setLocale('id');
-    date_default_timezone_set('Asia/Jakarta');
-  @endphp
+   @php
+      use Illuminate\Support\Carbon;
+      Carbon::setLocale('id');
+      date_default_timezone_set('Asia/Jakarta');
+
+      $dayMap = [
+        'Sen' => 'Senin',
+        'Sel' => 'Selasa',
+        'Rab' => 'Rabu',
+        'Kam' => 'Kamis',
+        'Jum' => 'Jumat',
+      ];
+
+      $payDayCode = $activeYear?->setting?->pay_day_hint;
+      $payDayText = $payDayCode ? ($dayMap[$payDayCode] ?? $payDayCode) : null;
+    @endphp
+
 
   {{-- Flash message --}}
   @if(session('success'))
@@ -71,22 +83,27 @@
           <form method="POST" action="{{ route('period.openToday') }}" class="js-oneclick">
             @csrf
             <button class="btn btn-primary rounded-pill">
-              Buat Periode Minggu Baru
+              Buat Periode  
             </button>
           </form>
 
+          @if($payDayText)
+            <span class="badge bg-light text-dark border rounded-pill">
+              Rekomendasi mulai periode: <strong>{{ $payDayText }}</strong>
+            </span>
+          @endif
+
           @if($periods->isNotEmpty())
             <span class="text-muted small">
-              Tidak ada periode <strong>OPEN</strong>. Kamu bisa
-              <strong>buka salah satu</strong> pada tabel di bawah, atau
-              <strong>buat minggu baru</strong>.
+              Tidak ada periode <strong>OPEN</strong>.  
             </span>
           @else
             <span class="text-muted small">
-              Belum ada periode kas. Klik <strong>Buat Periode Minggu Baru</strong> untuk memulai minggu pertama.
+              Belum ada periode kas. Klik <strong>Buat Periode  </strong> 
             </span>
           @endif
         @endif
+
 
         {{-- Jika ada periode OPEN, boleh tutup --}}
         @if($currentOpen)
