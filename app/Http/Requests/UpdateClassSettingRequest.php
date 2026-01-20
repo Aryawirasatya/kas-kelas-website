@@ -12,6 +12,8 @@ class UpdateClassSettingRequest extends FormRequest
     {
         return [
             'kas_nominal' => ['required','integer','min:1000','max:1000000'],
+            'pay_day_hint' => ['nullable', 'in:Sen,Sel,Rab,Kam,Jum'],
+
         ];
     }
 }

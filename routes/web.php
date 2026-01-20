@@ -155,6 +155,14 @@ Route::middleware(['auth', 'role:siswa'])->group(function () {
 Route::get('/auth/google/redirect', [GoogleController::class, 'redirect'])->name('google.redirect');
 Route::get('/auth/google/callback', [GoogleController::class, 'callback'])->name('google.callback');
 
+Route::get('/year/{year}/students/template', [YearController::class, 'downloadTemplate'])
+    ->name('year.students.template');
+
+Route::get('/year/{year}/students/template-csv', [YearController::class, 'downloadTemplateCsv'])
+    ->name('year.students.template.csv');
+Route::get('/reports/period/{period}/arrears', [ReportController::class, 'arrearsDetail'])
+    ->name('reports.period.arrears')
+    ->middleware(['auth']);
 // ======================================================================
 // Auth routes (Breeze / Fortify / dll.)
 // ======================================================================
